@@ -15,9 +15,29 @@ function App() {
     try {
       await googleAuthService.initialize();
       const isSignedIn = googleAuthService.isSignedIn();
-      setIsAuthenticated(isSignedIn);
+      
+      // If not signed in but we have a stored token, try to use it
+      if (!isSignedIn) {
+        const token = localStorage.getItem('google_auth_token');
+        if (token) {
+          try {
+            await googleAuthService.signIn();
+            setIsAuthenticated(true);
+          } catch (error) {
+            console.error('Failed to restore session:', error);
+            // Clear invalid token
+            localStorage.removeItem('google_auth_token');
+            setIsAuthenticated(false);
+          }
+        } else {
+          setIsAuthenticated(false);
+        }
+      } else {
+        setIsAuthenticated(true);
+      }
     } catch (error) {
       console.error('Error checking auth status:', error);
+      setIsAuthenticated(false);
     } finally {
       setIsLoading(false);
     }

@@ -5,6 +5,22 @@ class GoogleAuthService {
     this.gapi = null;
     this.tokenClient = null;
     this.isInitialized = false;
+    this.TOKEN_STORAGE_KEY = 'google_auth_token';
+  }
+
+  // Helper method to store token
+  _storeToken(token) {
+    if (token) {
+      localStorage.setItem(this.TOKEN_STORAGE_KEY, JSON.stringify(token));
+    } else {
+      localStorage.removeItem(this.TOKEN_STORAGE_KEY);
+    }
+  }
+
+  // Helper method to load token
+  _loadToken() {
+    const tokenString = localStorage.getItem(this.TOKEN_STORAGE_KEY);
+    return tokenString ? JSON.parse(tokenString) : null;
   }
 
   async initialize() {
@@ -44,6 +60,12 @@ class GoogleAuthService {
             callback: '',
           });
 
+          // Restore token from storage if available
+          const savedToken = this._loadToken();
+          if (savedToken) {
+            this.gapi.client.setToken(savedToken);
+          }
+
           this.isInitialized = true;
           resolve();
         } catch (error) {
@@ -73,8 +95,9 @@ class GoogleAuthService {
           reject(resp);
           return;
         }
-        // Store the token in gapi for consistency
+        // Store the token in gapi and localStorage
         this.gapi.client.setToken(resp);
+        this._storeToken(resp);
         resolve(resp);
       };
 
@@ -91,6 +114,7 @@ class GoogleAuthService {
     if (token !== null) {
       window.google.accounts.oauth2.revoke(token.access_token);
       this.gapi.client.setToken('');
+      this._storeToken(null); // Clear stored token
     }
   }
 
