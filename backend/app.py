@@ -44,24 +44,28 @@ class HelloWorldRequest(BaseModel):
     row_count: int = 10
 
 # Helper function to get Google Sheets service
-def get_sheets_service(token_data: dict):
-    try:
-        creds = Credentials(
-            token=token_data["access_token"],
-            refresh_token=token_data.get("refresh_token"),
-            token_uri=token_data["token_uri"],
-            client_id=token_data["client_id"],
-            client_secret=token_data["client_secret"],
-            scopes=token_data["scopes"]
-        )
-        
-        service = build('sheets', 'v4', credentials=creds)
-        return service
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Failed to authenticate with Google Sheets"
-        )
+def get_sheets_service():
+    creds = Credentials(
+        None,
+        refresh_token=os.getenv("GOOGLE_REFRESH_TOKEN"),
+        token_uri=os.getenv("GOOGLE_TOKEN_URI"),
+        client_id=os.getenv("GOOGLE_CLIENT_ID"),
+        client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+
+    if not creds.valid:
+        creds.refresh(Request())
+
+    return build('sheets', 'v4', credentials=creds)
+
+# Exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"An error occurred: {str(exc)}"}
+    )
 
 # Global exception handler
 @app.exception_handler(Exception)
@@ -79,117 +83,26 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors(), "body": exc.body}
     )
 
-# Endpoint to print hello world in a spreadsheet
 @app.post("/api/print-hello-world")
-async def print_hello_world(
-    request: HelloWorldRequest,
-    authorization: str = Header(..., description="Bearer token from Google OAuth"),
-):
-    # Extract the token from the Authorization header
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header"
-        )
+async def print_hello_world(request: HelloWorldRequest):
+    service = get_sheets_service()
     
-    # In a real application, you would validate the token here
-    # For now, we'll just pass it through to the Google API
-    token_data = {
-        "access_token": authorization[7:],  # Remove 'Bearer ' prefix
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "client_id": "", 
-        "client_secret": "", 
-        "scopes": ["https://www.googleapis.com/auth/spreadsheets"]
-    }
-    try:
-        request_data = request.dict() if hasattr(request, 'dict') else request
-        
-        print("\n=== Incoming Request ===")
-        print(f"Request data: {request_data}")
-        
-        service = get_sheets_service(token_data)
-        
-        spreadsheet_id = request_data.get('spreadsheet_id')
-        sheet_name = request_data.get('sheet_name', 'Sheet1')
-        row_count = request_data.get('row_count', 10)
-        
-        print(f"Processing request for spreadsheet: {spreadsheet_id}, sheet: {sheet_name}")
-        print(f"Will write {row_count} rows of 'Hello World' to column A")
-        
-        # First, get the spreadsheet to check if the sheet exists
-        spreadsheet = service.spreadsheets().get(
-            spreadsheetId=spreadsheet_id
-        ).execute()
-        
-        # Check if sheet exists
-        sheet_exists = any(sheet['properties']['title'] == sheet_name 
-                         for sheet in spreadsheet.get('sheets', []))
-        
-        # If sheet doesn't exist, create it
-        if not sheet_exists:
-            # Create a new sheet
-            body = {
-                'requests': [{
-                    'addSheet': {
-                        'properties': {
-                            'title': sheet_name
-                        }
-                    }
-                }]
-            }
-            service.spreadsheets().batchUpdate(
-                spreadsheetId=spreadsheet_id,
-                body=body
-            ).execute()
-        
-        # Prepare the data to write as a column
-        values = [[f"Hello World {i+1}" for i in range(row_count)]]  # Single row with all values
-        
-        # Update the spreadsheet
-        range_name = f"{sheet_name}!A1:A{row_count}"  # Remove quotes around sheet name
-        
-        body = {
-            'values': values,
-            'majorDimension': 'COLUMNS'  
-        }
-        
-        print(f"\n=== Making Google Sheets API Call ===")
-        print(f"Range: {range_name}")
-        print(f"Values to write: {values}")
-        print(f"Request body: {body}")
-        
-        # First try to get the sheet to verify it exists
-        try:
-            print("\n=== Verifying Sheet Access ===")
-            sheet_metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-            print(f"Found spreadsheet: {sheet_metadata.get('properties', {}).get('title')}")
-            print(f"Sheets in document: {[s['properties']['title'] for s in sheet_metadata.get('sheets', [])]}")
-            
-            # Now make the update
-            print("\n=== Making Update Request ===")
-            result = service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=range_name,
-                valueInputOption="USER_ENTERED",
-                body=body
-            ).execute()
-            print(f"Update result: {result}")
-            
-        except Exception as e:
-            print(f"\n=== Error Details ===")
-            print(f"Error type: {type(e).__name__}")
-            print(f"Error details: {str(e)}")
-            if hasattr(e, 'content'):
-                print(f"Error content: {e.content.decode('utf-8')}")
-            raise
-        
-        return {"status": "success", "updated_cells": result.get('updatedCells')}
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update spreadsheet: {str(e)}"
-        )
+    spreadsheet_id = request.spreadsheet_id
+    sheet_name = request.sheet_name
+    row_count = request.row_count
+
+    values = [[f"Hello World {i+1}" for i in range(row_count)]]
+    range_name = f"{sheet_name}!A1:A{row_count}"
+    body = {'values': values, 'majorDimension': 'COLUMNS'}
+
+    result = service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=range_name,
+        valueInputOption="USER_ENTERED",
+        body=body
+    ).execute()
+
+    return {"status": "success", "updated_cells": result.get('updatedCells')}
 
 # Health check endpoint
 @app.get("/api/health")
