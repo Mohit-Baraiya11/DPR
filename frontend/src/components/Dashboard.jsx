@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { FileSpreadsheet, RefreshCw, LogOut, Edit3, Plus } from 'lucide-react';
+import { FileSpreadsheet, RefreshCw, LogOut, MessageSquare } from 'lucide-react';
 import googleAuthService from '../services/googleAuth.js';
-import SheetEditor from './SheetEditor.jsx';
+import ChatInterface from './ChatInterface';
 
 const Dashboard = ({ onLogout }) => {
   const [spreadsheets, setSpreadsheets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedSheet, setSelectedSheet] = useState(null);
   const [error, setError] = useState('');
+  const [view, setView] = useState('list'); // 'list' or 'chat'
 
   useEffect(() => {
     fetchSpreadsheets();
@@ -18,7 +19,6 @@ const Dashboard = ({ onLogout }) => {
       setLoading(true);
       setError('');
       
-      // Debug authentication status
       const authInfo = googleAuthService.getAuthInfo();
       console.log('Auth info:', authInfo);
       
@@ -33,13 +33,7 @@ const Dashboard = ({ onLogout }) => {
       setSpreadsheets(sheets);
     } catch (error) {
       console.error('Error fetching spreadsheets:', error);
-      console.error('Error details:', {
-        message: error.message,
-        status: error.status,
-        result: error.result
-      });
       
-      // More specific error messages
       if (error.status === 403) {
         setError('Access denied. Please check your Google Drive permissions.');
       } else if (error.status === 401) {
@@ -68,12 +62,21 @@ const Dashboard = ({ onLogout }) => {
     });
   };
 
-  if (selectedSheet) {
+  const handleSheetSelect = (sheet) => {
+    setSelectedSheet(sheet);
+    setView('chat');
+  };
+
+  const handleBackToList = () => {
+    setView('list');
+    setSelectedSheet(null);
+  };
+
+  if (view === 'chat' && selectedSheet) {
     return (
-      <SheetEditor 
+      <ChatInterface 
         sheet={selectedSheet} 
-        onBack={() => setSelectedSheet(null)}
-        onLogout={onLogout}
+        onBack={handleBackToList}
       />
     );
   }
@@ -99,78 +102,68 @@ const Dashboard = ({ onLogout }) => {
                 className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
               >
                 <LogOut className="h-4 w-4 mr-2" />
-                Sign Out
+                Sign out
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-2">Your Google Sheets</h2>
-          <p className="text-sm text-gray-600">
-            Select a spreadsheet to view and edit your data
-          </p>
-        </div>
-
-        {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
-            <p className="text-red-800">{error}</p>
+        <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+          <div className="px-4 py-5 sm:px-6 border-b border-gray-200">
+            <h3 className="text-lg leading-6 font-medium text-gray-900">Your Google Sheets</h3>
+            <p className="mt-1 max-w-2xl text-sm text-gray-500">Select a sheet to start chatting about it</p>
           </div>
-        )}
-
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <RefreshCw className="h-8 w-8 animate-spin text-gray-400" />
-            <span className="ml-3 text-gray-600">Loading spreadsheets...</span>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {spreadsheets.map((sheet) => (
-              <div
-                key={sheet.id}
-                className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => setSelectedSheet(sheet)}
-              >
-                <div className="flex items-start space-x-3">
-                  <FileSpreadsheet className="h-8 w-8 text-green-600 mt-1" />
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-medium text-gray-900 truncate">
-                      {sheet.name}
-                    </h3>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Modified: {formatDate(sheet.modifiedTime)}
-                    </p>
-                  </div>
-                  <Edit3 className="h-4 w-4 text-gray-400" />
+          
+          {error && (
+            <div className="bg-red-50 border-l-4 border-red-400 p-4 m-4">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="ml-3">
+                  <p className="text-sm text-red-700">{error}</p>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-
-        {!loading && spreadsheets.length === 0 && (
-          <div className="text-center py-12">
-            <FileSpreadsheet className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No spreadsheets found</h3>
-            <p className="mt-1 text-sm text-gray-500">
-              Create a Google Sheet to get started
-            </p>
-            <div className="mt-6">
-              <a
-                href="https://docs.google.com/spreadsheets/create"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Create New Sheet
-              </a>
             </div>
-          </div>
-        )}
+          )}
+
+          {loading ? (
+            <div className="flex justify-center p-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-200">
+              {spreadsheets.map((sheet) => (
+                <li key={sheet.id}>
+                  <button
+                    onClick={() => handleSheetSelect(sheet)}
+                    className="w-full text-left hover:bg-gray-50 focus:outline-none focus:bg-gray-50"
+                  >
+                    <div className="px-4 py-4 sm:px-6 flex items-center justify-between">
+                      <div className="flex items-center">
+                        <FileSpreadsheet className="h-5 w-5 text-green-600 mr-3" />
+                        <p className="text-sm font-medium text-primary-600 truncate">
+                          {sheet.name}
+                        </p>
+                      </div>
+                      <div className="flex items-center">
+                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                          Open Chat
+                        </span>
+                        <MessageSquare className="ml-2 h-4 w-4 text-gray-400" />
+                      </div>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );

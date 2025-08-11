@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import Login from './components/Login.jsx';
 import Dashboard from './components/Dashboard.jsx';
 import googleAuthService from './services/googleAuth.js';
@@ -6,38 +7,56 @@ import googleAuthService from './services/googleAuth.js';
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     checkAuthStatus();
   }, []);
+
+  useEffect(() => {
+    // Save the current route whenever it changes
+    if (!isLoading && location.pathname !== '/login') {
+      localStorage.setItem('lastPath', location.pathname);
+    }
+  }, [location.pathname, isLoading]);
 
   const checkAuthStatus = async () => {
     try {
       await googleAuthService.initialize();
       const isSignedIn = googleAuthService.isSignedIn();
       
-      // If not signed in but we have a stored token, try to use it
       if (!isSignedIn) {
         const token = localStorage.getItem('google_auth_token');
         if (token) {
           try {
             await googleAuthService.signIn();
             setIsAuthenticated(true);
+            // Redirect to last visited path or dashboard
+            const lastPath = localStorage.getItem('lastPath') || '/';
+            navigate(lastPath);
           } catch (error) {
             console.error('Failed to restore session:', error);
-            // Clear invalid token
             localStorage.removeItem('google_auth_token');
             setIsAuthenticated(false);
+            navigate('/login');
           }
         } else {
           setIsAuthenticated(false);
+          navigate('/login');
         }
       } else {
         setIsAuthenticated(true);
+        // If user is already authenticated but on login page, redirect to last path or dashboard
+        if (location.pathname === '/login') {
+          const lastPath = localStorage.getItem('lastPath') || '/';
+          navigate(lastPath);
+        }
       }
     } catch (error) {
       console.error('Error checking auth status:', error);
       setIsAuthenticated(false);
+      navigate('/login');
     } finally {
       setIsLoading(false);
     }
@@ -45,10 +64,14 @@ function App() {
 
   const handleLogin = () => {
     setIsAuthenticated(true);
+    const lastPath = localStorage.getItem('lastPath') || '/';
+    navigate(lastPath);
   };
 
   const handleLogout = () => {
     setIsAuthenticated(false);
+    localStorage.removeItem('lastPath');
+    navigate('/login');
   };
 
   if (isLoading) {
@@ -64,11 +87,23 @@ function App() {
 
   return (
     <div className="App">
-      {isAuthenticated ? (
-        <Dashboard onLogout={handleLogout} />
-      ) : (
-        <Login onLogin={handleLogin} />
-      )}
+      <Routes>
+        <Route 
+          path="/login" 
+          element={!isAuthenticated ? 
+            <Login onLogin={handleLogin} /> : 
+            <Navigate to="/" replace />
+          } 
+        />
+        <Route 
+          path="/*" 
+          element={
+            isAuthenticated ? 
+              <Dashboard onLogout={handleLogout} /> : 
+              <Navigate to="/login" state={{ from: location }} replace />
+          } 
+        />
+      </Routes>
     </div>
   );
 }
