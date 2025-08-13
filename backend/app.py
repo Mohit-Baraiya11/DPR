@@ -9,6 +9,7 @@ from typing import Optional, List
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
+from src.prompt_builder import process_user_query
 from dotenv import load_dotenv
 from datetime import datetime
 import uvicorn
@@ -147,9 +148,22 @@ async def get_sheet_info(request: SheetInfoRequest):
 
     # Step 2: Prepare ROW_INDEX data
     row_index_data = {}
+    empty_row_count = 0
+    max_consecutive_empty = 4
+    
     for idx, row in enumerate(values[2:], start=3):  # start=3 to match sheet row numbers
-        if all((cell.strip() == "" if isinstance(cell, str) else True) for cell in row[:breakpoint_index]):
-            break
+        # Check if current row is empty (all cells before breakpoint are empty)
+        is_empty = all((cell.strip() == "" if isinstance(cell, str) else True) 
+                      for cell in row[:breakpoint_index])
+        
+        if is_empty:
+            empty_row_count += 1
+            if empty_row_count >= max_consecutive_empty:
+                break  # Stop if we hit 4 consecutive empty rows
+            continue
+        else:
+            empty_row_count = 0  # Reset counter if we find a non-empty row
+            
         row_data = row[:breakpoint_index] + [""] * (len(headers_before_break) - len(row))
         row_index_data[idx] = dict(zip(headers_before_break, row_data))
 
@@ -188,16 +202,12 @@ async def update_sheet(request: UpdateSheetRequest):
         
         if sheet_info.get("status") != "success":
             return {"status": "error", "message": "Failed to fetch sheet data"}
+         
         
-        # Import process_user_query here to avoid circular imports
-        from src.prompt_builder import process_user_query
-        from src.config import SHEET_DATA
-        
-        # Prepare the ACTION_PROMPT with sheet data and user query
         ACTION_PROMPT = f"""
         You are given
         SHEET DATA: 
-        {SHEET_DATA}
+        {sheet_info}
 
         USER QUERY:
         {request.user_query}
