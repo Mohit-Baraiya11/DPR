@@ -101,7 +101,7 @@ def ensure_log_sheet_exists(service, spreadsheet_id):
                     # Add headers
                     headers = [
                         'time', 'site_engineer_name', 'Location', 'Sub Location',
-                        'Peta Location', 'Category', 'updation', 'quantity',
+                        'Peta Location', 'Category', 'updation', 'requested_quantity',
                         'updated_quantity', 'user_query', 'feedback', 'updated_cell'
                     ]
                     service.spreadsheets().values().update(
@@ -136,7 +136,7 @@ def ensure_log_sheet_exists(service, spreadsheet_id):
             # Add headers
             headers = [
                 'time', 'site_engineer_name', 'Location', 'Sub Location',
-                'Peta Location', 'Category', 'updation', 'quantity',
+                'Peta Location', 'Category', 'updation', 'requested_quantity',
                 'updated_quantity', 'user_query', 'feedback', 'updated_cell'
             ]
             
@@ -509,8 +509,8 @@ async def update_sheet(request: UpdateSheetRequest):
                     # Get the row values
                     row_values = result.get('values', [['', '', '', '']])[0]
                     
-                    # Get the updated quantity from the QNT sheet
-                    qnt_range = f"'QNT'!{col_idx.upper()}{row_num}"
+                    # Get the updated quantity from the QNT sheet (add 1 to row_num for 1-based indexing)
+                    qnt_range = f"'QNT'!{col_idx.upper()}{row_num + 1}"
                     qnt_result = service.spreadsheets().values().get(
                         spreadsheetId=request.spreadsheet_id,
                         range=qnt_range,
@@ -537,7 +537,7 @@ async def update_sheet(request: UpdateSheetRequest):
                         updated_qty,                                   # updated_quantity
                         request.user_query,                            # user_query
                         str(feedback),                                 # feedback
-                        f"{col_idx.upper()}{row_num}"                  # updated_cell
+                        f"{col_idx.upper()}{row_num + 1}"                  # updated_cell (add 1 for 1-based indexing)
                     ]
                     log_entries.append(log_entry)
                     
