@@ -1,5 +1,6 @@
 import os
 import string
+from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -58,6 +59,7 @@ class UpdateSheetRequest(BaseModel):
     spreadsheet_id: str
     sheet_name: str = "Sheet1"
     user_query: str
+    site_engineer_name: str = "Unknown"  # Add site_engineer_name field
 
 # -----------------------------
 # Helper function to get Sheets service
@@ -76,6 +78,98 @@ def get_sheets_service():
         creds.refresh(GoogleRequest())
 
     return build('sheets', 'v4', credentials=creds)
+
+def ensure_log_sheet_exists(service, spreadsheet_id):
+    """Ensure LOG sheet exists and has the correct headers."""
+    try:
+        # Check if LOG sheet exists
+        spreadsheet = service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id
+        ).execute()
+        
+        log_sheet_id = None
+        for sheet in spreadsheet.get('sheets', []):
+            if sheet['properties']['title'] == 'LOG':
+                log_sheet_id = sheet['properties']['sheetId']
+                # Check if headers exist
+                result = service.spreadsheets().values().get(
+                    spreadsheetId=spreadsheet_id,
+                    range="'LOG'!A1:L1"
+                ).execute()
+                
+                if 'values' not in result:
+                    # Add headers
+                    headers = [
+                        'time', 'site_engineer_name', 'Location', 'Sub Location',
+                        'Peta Location', 'Category', 'updation', 'quantity',
+                        'updated_quantity', 'user_query', 'feedback', 'updated_cell'
+                    ]
+                    service.spreadsheets().values().update(
+                        spreadsheetId=spreadsheet_id,
+                        range="'LOG'!A1",
+                        valueInputOption='USER_ENTERED',
+                        body={'values': [headers]}
+                    ).execute()
+                break
+        
+        # If LOG sheet doesn't exist, create it
+        if log_sheet_id is None:
+            add_sheet_request = {
+                'addSheet': {
+                    'properties': {
+                        'title': 'LOG',
+                        'gridProperties': {
+                            'rowCount': 1000,
+                            'columnCount': 12
+                        }
+                    }
+                }
+            }
+            
+            result = service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={'requests': [add_sheet_request]}
+            ).execute()
+            
+            log_sheet_id = result['replies'][0]['addSheet']['properties']['sheetId']
+            
+            # Add headers
+            headers = [
+                'time', 'site_engineer_name', 'Location', 'Sub Location',
+                'Peta Location', 'Category', 'updation', 'quantity',
+                'updated_quantity', 'user_query', 'feedback', 'updated_cell'
+            ]
+            
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range="'LOG'!A1",
+                valueInputOption='USER_ENTERED',
+                body={'values': [headers]}
+            ).execute()
+            
+            # Freeze the header row
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={
+                    'requests': [{
+                        'updateSheetProperties': {
+                            'properties': {
+                                'sheetId': log_sheet_id,
+                                'gridProperties': {
+                                    'frozenRowCount': 1
+                                }
+                            },
+                            'fields': 'gridProperties.frozenRowCount'
+                        }
+                    }]
+                }
+            ).execute()
+        
+        return log_sheet_id
+        
+    except Exception as e:
+        print(f"Warning: Could not ensure LOG sheet exists: {str(e)}")
+        return None
 
 # -----------------------------
 # Exception handlers
@@ -383,10 +477,99 @@ async def update_sheet(request: UpdateSheetRequest):
         # Execute the batch update if there are requests
         if requests:
             body = {'requests': requests}
-            result = service.spreadsheets().batchUpdate(
+            service.spreadsheets().batchUpdate(
                 spreadsheetId=request.spreadsheet_id,
                 body=body
             ).execute()
+            
+            # Log the updates to LOG sheet
+            log_entries = []
+            for i, (row_idx, col_idx, update, qty, feedback) in enumerate(zip(row_indices, columns_indices, updations, quantities, feedbacks)):
+                try:
+                    # Get the row data (A,B,C,D columns)
+                    row_num = int(row_idx)
+                    range_notation = f"{request.sheet_name}!A{row_num}:D{row_num}"
+                    result = service.spreadsheets().values().get(
+                        spreadsheetId=request.spreadsheet_id,
+                        range=range_notation,
+                        valueRenderOption='UNFORMATTED_VALUE'
+                    ).execute()
+                    
+                    # Get the column header (row 2 of the updated column)
+                    header_range = f"{request.sheet_name}!{col_idx}2"
+                    header_result = service.spreadsheets().values().get(
+                        spreadsheetId=request.spreadsheet_id,
+                        range=header_range,
+                        valueRenderOption='UNFORMATTED_VALUE'
+                    ).execute()
+                    
+                    # Get the column header value
+                    column_header = header_result.get('values', [['']])[0][0] if 'values' in header_result else ''
+                    
+                    # Get the row values
+                    row_values = result.get('values', [['', '', '', '']])[0]
+                    
+                    # Get the updated quantity from the QNT sheet
+                    qnt_range = f"'QNT'!{col_idx.upper()}{row_num}"
+                    qnt_result = service.spreadsheets().values().get(
+                        spreadsheetId=request.spreadsheet_id,
+                        range=qnt_range,
+                        valueRenderOption='UNFORMATTED_VALUE'
+                    ).execute()
+                    
+                    updated_qty = 0.0
+                    if 'values' in qnt_result and qnt_result['values']:
+                        try:
+                            updated_qty = float(str(qnt_result['values'][0][0]))
+                        except (ValueError, IndexError, KeyError):
+                            updated_qty = 0.0
+                    
+                    # Create log entry
+                    log_entry = [
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),  # time
+                        request.site_engineer_name,                    # site_engineer_name
+                        str(row_values[0]) if len(row_values) > 0 else '',  # Location
+                        str(row_values[1]) if len(row_values) > 1 else '',  # Sub Location
+                        str(row_values[2]) if len(row_values) > 2 else '',  # Peta Location
+                        str(row_values[3]) if len(row_values) > 3 else '',  # Category
+                        str(column_header),                            # updation (column header)
+                        float(qty) if str(qty).replace('.', '').isdigit() else 0.0,  # quantity
+                        updated_qty,                                   # updated_quantity
+                        request.user_query,                            # user_query
+                        str(feedback),                                 # feedback
+                        f"{col_idx.upper()}{row_num}"                  # updated_cell
+                    ]
+                    log_entries.append(log_entry)
+                    
+                except Exception as e:
+                    print(f"Warning: Could not prepare log entry for {col_idx}{row_idx}: {str(e)}")
+            
+            # Write log entries to LOG sheet if any
+            if log_entries:
+                try:
+                    # Ensure LOG sheet exists and get its ID
+                    log_sheet_id = ensure_log_sheet_exists(service, request.spreadsheet_id)
+                    
+                    if log_sheet_id is not None:
+                        # Get the next empty row in LOG sheet
+                        result = service.spreadsheets().values().get(
+                            spreadsheetId=request.spreadsheet_id,
+                            range="'LOG'!A:A",
+                            valueRenderOption='UNFORMATTED_VALUE'
+                        ).execute()
+                        
+                        next_row = len(result.get('values', [])) + 1
+                        
+                        # Append log entries
+                        service.spreadsheets().values().update(
+                            spreadsheetId=request.spreadsheet_id,
+                            range=f"'LOG'!A{next_row}",
+                            valueInputOption='USER_ENTERED',
+                            body={'values': log_entries}
+                        ).execute()
+                        
+                except Exception as e:
+                    print(f"Warning: Could not write to LOG sheet: {str(e)}")
         
         # Combine all feedbacks into a single message
         combined_feedback = "\n\n".join(feedbacks)
