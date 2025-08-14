@@ -3,8 +3,8 @@ from agno.models.groq import Groq
 from utils.logger import get_logger
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv 
-from .config import SYSTEM_PROMPT, SHEET_DATA
-import os 
+from .config import SYSTEM_PROMPT
+import os
 
 load_dotenv()
 

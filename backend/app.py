@@ -236,47 +236,73 @@ async def update_sheet(request: UpdateSheetRequest):
         service = get_sheets_service()
         today = datetime.now().strftime("%Y-%m-%d")
         
-        # Get the sheet ID first
+        # Get both sheet IDs (main sheet and QNT sheet) from the same spreadsheet
         spreadsheet = service.spreadsheets().get(
             spreadsheetId=request.spreadsheet_id
         ).execute()
         
-        # Find the sheet ID for the requested sheet
-        sheet_id = None
+        main_sheet_id = None
+        qnt_sheet_id = None
+        
         for sheet in spreadsheet.get('sheets', []):
-            if sheet['properties']['title'] == request.sheet_name:
-                sheet_id = sheet['properties']['sheetId']
-                break
-                
-        if sheet_id is None:
+            title = sheet['properties']['title']
+            if title == request.sheet_name:
+                main_sheet_id = sheet['properties']['sheetId']
+            elif title == 'QNT':
+                qnt_sheet_id = sheet['properties']['sheetId']
+        
+        if main_sheet_id is None:
             return {"status": "error", "message": f"Sheet '{request.sheet_name}' not found in the spreadsheet"}
+            
+        if qnt_sheet_id is None:
+            # Create the QNT sheet if it doesn't exist
+            try:
+                add_sheet_request = {
+                    'addSheet': {
+                        'properties': {
+                            'title': 'QNT',
+                            'gridProperties': {
+                                'rowCount': 1000,
+                                'columnCount': 26
+                            }
+                        }
+                    }
+                }
+                
+                # Execute the batch update to add the sheet
+                result = service.spreadsheets().batchUpdate(
+                    spreadsheetId=request.spreadsheet_id,
+                    body={'requests': [add_sheet_request]}
+                ).execute()
+                
+                # Get the new sheet's ID from the response
+                qnt_sheet_id = result['replies'][0]['addSheet']['properties']['sheetId']
+                
+                print(f"Created new QNT sheet with ID: {qnt_sheet_id}")
+                    
+            except Exception as e:
+                return {"status": "error", "message": f"Failed to create QNT sheet: {str(e)}"}
         
         # Prepare batch update request for cell formatting and values
         requests = []
         
-        for row_idx, col_idx, update in zip(row_indices, columns_indices, updations):
+        for (row_idx, col_idx, update, qty) in zip(row_indices, columns_indices, updations, quantities):
             # Convert column letter to column number (0-based)
             col_num = ord(col_idx.upper()) - ord('A')
-            row_num = int(row_idx) - 1  # Convert to 0-based
+            row_num = int(row_idx)  # Convert to 0-based
             
-            # Determine cell formatting based on update type
+            # 1. Update main sheet with date and formatting
             bg_color = {
-                'red': 1.0,          # Full red for yellow mix
-                'green': 0.9,        # High green for yellow mix
-                'blue': 0.0,         # No blue
-                'alpha': 1.0
+                'red': 1.0, 'green': 0.9, 'blue': 0.0, 'alpha': 1.0  # Yellow for WIP
             } if update == 'WIP' else {
-                'red': 0.0,          # No red
-                'green': 0.8,        # Green for COM
-                'blue': 0.0,         # No blue
-                'alpha': 1.0
+                'red': 0.0, 'green': 0.8, 'blue': 0.0, 'alpha': 1.0  # Green for COM
             }
             
-            # Add request to update cell value and format
+            # Add request for main sheet update
             requests.append({
                 'updateCells': {
                     'range': {
-                        'sheetId': sheet_id,
+                        'sheetId': main_sheet_id,
                         'startRowIndex': row_num,
                         'endRowIndex': row_num + 1,
                         'startColumnIndex': col_num,
@@ -284,7 +310,7 @@ async def update_sheet(request: UpdateSheetRequest):
                     },
                     'rows': [{
                         'values': [{
-                            'userEnteredValue': {'stringValue': today},  # Only today's date
+                            'userEnteredValue': {'stringValue': today},
                             'userEnteredFormat': {
                                 'backgroundColor': bg_color,
                                 'textFormat': {'bold': True},
@@ -294,6 +320,63 @@ async def update_sheet(request: UpdateSheetRequest):
                         }]
                     }],
                     'fields': 'userEnteredValue,userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)'
+                }
+            })
+            
+            # 2. Get existing value from QNT sheet and add new quantity
+            try:
+                # First, get the current value from the QNT sheet
+                cell_range = f"{col_idx}{row_num + 1}"  # +1 because row_num is 0-based
+                result = service.spreadsheets().values().get(
+                    spreadsheetId=request.spreadsheet_id,
+                    range=f"'QNT'!{cell_range}",
+                    valueRenderOption='UNFORMATTED_VALUE'
+                ).execute()
+                
+                # Parse the existing value (default to 0 if empty)
+                existing_value = 0.0
+                if 'values' in result and result['values']:
+                    try:
+                        existing_value = float(str(result['values'][0][0]))
+                    except (ValueError, IndexError, KeyError):
+                        existing_value = 0.0
+                
+                # Parse the new quantity
+                try:
+                    new_qty = float(str(qty).strip()) if str(qty).strip().replace('.', '').isdigit() else 0.0
+                except (ValueError, AttributeError):
+                    new_qty = 0.0
+                
+                # Calculate the total
+                total_value = existing_value + new_qty
+                
+            except Exception as e:
+                return {"status": "error", "message": f"Failed to read from QNT sheet: {str(e)}"}
+            
+            # Add request to update QNT sheet with the total
+            requests.append({
+                'updateCells': {
+                    'range': {
+                        'sheetId': qnt_sheet_id,
+                        'startRowIndex': row_num,
+                        'endRowIndex': row_num + 1,
+                        'startColumnIndex': col_num,
+                        'endColumnIndex': col_num + 1
+                    },
+                    'rows': [{
+                        'values': [{
+                            'userEnteredValue': {'numberValue': total_value},
+                            'userEnteredFormat': {
+                                'numberFormat': {
+                                    'type': 'NUMBER',
+                                    'pattern': '0.00'
+                                },
+                                'horizontalAlignment': 'CENTER',
+                                'verticalAlignment': 'MIDDLE'
+                            }
+                        }]
+                    }],
+                    'fields': 'userEnteredValue,userEnteredFormat(numberFormat,horizontalAlignment,verticalAlignment)'
                 }
             })
         
