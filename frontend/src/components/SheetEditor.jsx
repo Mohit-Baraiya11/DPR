@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Save, RefreshCw, Plus, Trash2, Edit2, Type } from 'lucide-react';
-import googleAuthService from '../services/googleAuth.js';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Save, RefreshCw, Plus, Trash2, Edit2, Type, LogOut } from 'lucide-react';
+import googleAuthService from '../services/googleAuth';
 
-const SheetEditor = ({ sheet, onBack, onLogout }) => {
+const SheetEditor = ({ onLogout }) => {
+  const { id: sheetId } = useParams();
+  const navigate = useNavigate();
+  const [sheet, setSheet] = useState(null);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -11,15 +15,11 @@ const SheetEditor = ({ sheet, onBack, onLogout }) => {
   const [editValue, setEditValue] = useState('');
   const [isPrinting, setIsPrinting] = useState(false);
 
-  useEffect(() => {
-    fetchSheetData();
-  }, [sheet.id]);
-
-  const fetchSheetData = async () => {
+  const fetchSheetData = async (id) => {
     try {
       setLoading(true);
       setError('');
-      console.log('Attempting to fetch data for sheet ID:', sheet.id);
+      console.log('Fetching data for sheet ID:', id);
       
       // First, ensure we're properly authenticated
       const authInfo = googleAuthService.getAuthInfo();
@@ -35,16 +35,30 @@ const SheetEditor = ({ sheet, onBack, onLogout }) => {
         }
       }
       
-      // Now try to get the sheet data
-      const result = await googleAuthService.getSheetData(sheet.id);
-      console.log('Received sheet data:', result);
+      // Get both sheet data and metadata in parallel
+      const [sheetData, metadata] = await Promise.all([
+        googleAuthService.getSheetData(id),
+        googleAuthService.getSpreadsheetMetadata(id)
+      ]);
       
-      if (!result || !result.values) {
+      console.log('Received sheet data:', sheetData);
+      
+      // Update sheet metadata
+      setSheet({
+        id,
+        name: metadata.properties.title,
+        ...sheetData
+      });
+      
+      // Update data state
+      if (!sheetData || !sheetData.values) {
         console.warn('No data returned from sheet, initializing empty data');
         setData([[]]);
       } else {
-        setData(result.values);
+        setData(sheetData.values);
       }
+      
+      return sheetData;
       
     } catch (error) {
       console.error('Error in fetchSheetData:', {
@@ -68,17 +82,22 @@ const SheetEditor = ({ sheet, onBack, onLogout }) => {
       }
       
       setError(errorMessage);
-      
-      // If it's an auth error, suggest signing in again
-      if (error.status === 401 || error.message.includes('sign in')) {
-        setTimeout(() => {
-          onLogout();
-        }, 3000);
-      }
+      throw error;
     } finally {
       setLoading(false);
     }
   };
+
+  // Initial data fetch when component mounts or sheetId changes
+  useEffect(() => {
+    console.log('SheetEditor - Sheet ID from URL:', sheetId);
+    if (sheetId) {
+      fetchSheetData(sheetId).catch(console.error);
+    }
+  }, [sheetId]);
+
+  // Alias for backward compatibility
+  const fetchSheetContent = fetchSheetData;
 
   const handleCellEdit = (rowIndex, colIndex) => {
     const currentValue = data[rowIndex] ? data[rowIndex][colIndex] || '' : '';
@@ -106,7 +125,7 @@ const SheetEditor = ({ sheet, onBack, onLogout }) => {
 
       // Update Google Sheets
       const range = `A${row + 1}:${String.fromCharCode(65 + col)}${row + 1}`;
-      await googleAuthService.updateSheetData(sheet.id, range, [[editValue]]);
+      await googleAuthService.updateSheetData(sheetId, range, [[editValue]]);
 
       setEditingCell(null);
       setEditValue('');
@@ -167,7 +186,9 @@ const SheetEditor = ({ sheet, onBack, onLogout }) => {
       }
 
       // Refresh the sheet data to show the changes
-      await fetchSheetData();
+      if (sheet?.id) {
+        await fetchSheetData(sheet.id);
+      }
       
     } catch (error) {
       console.error('Error printing Hello World:', error);
@@ -183,28 +204,31 @@ const SheetEditor = ({ sheet, onBack, onLogout }) => {
 
   const maxColumns = Math.max(...data.map(row => row?.length || 0), 5);
 
+  const handleBack = () => {
+    navigate('/');
+  };
+
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className={`min-h-screen bg-gray-50 ${isPrinting ? 'p-8' : ''}`}>
       {/* Header */}
-      <div className="bg-white shadow-sm border-b">
+      <div className={`bg-white ${isPrinting ? 'hidden' : 'sticky top-0 z-10 shadow-sm border-b'}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-4">
               <button
-                onClick={onBack}
+                onClick={handleBack}
                 className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
               >
                 <ArrowLeft className="h-4 w-4 mr-2" />
-                Back
+                Back to Sheets
               </button>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">{sheet.name}</h1>
-                <p className="text-sm text-gray-500">Google Sheets Editor</p>
-              </div>
+              <h1 className="text-lg font-medium text-gray-900">
+                {sheet?.name || 'Loading...'}
+              </h1>
             </div>
             <div className="flex space-x-4">
               <button
-                onClick={fetchSheetData}
+                onClick={() => fetchSheetContent(sheetId)}
                 disabled={loading}
                 className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
               >

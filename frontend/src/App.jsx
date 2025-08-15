@@ -1,10 +1,47 @@
 import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate, useOutlet } from 'react-router-dom';
 import Login from './components/Login.jsx';
 import Dashboard from './components/Dashboard.jsx';
+import SheetEditor from './components/SheetEditor.jsx';
 import googleAuthService from './services/googleAuth.js';
 
 // Key for storing auth state in localStorage
 const AUTH_STORAGE_KEY = 'dpr_auth_state';
+const LAST_ROUTE_KEY = 'dpr_last_route';
+
+// Route Guard component
+const RouteGuard = ({ isAuthenticated, isLoading }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const outlet = useOutlet();
+
+  useEffect(() => {
+    // Store the current route whenever it changes
+    if (isAuthenticated && !isLoading && location.pathname !== '/') {
+      console.log('RouteGuard - Storing current route:', location.pathname);
+      localStorage.setItem(LAST_ROUTE_KEY, location.pathname);
+    }
+  }, [location.pathname, isAuthenticated, isLoading]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    // Store the intended destination before redirecting to login
+    if (location.pathname !== '/login') {
+      console.log('RouteGuard - Storing path for redirect:', location.pathname);
+      localStorage.setItem(LAST_ROUTE_KEY, location.pathname);
+    }
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return <>{outlet}</>;
+};
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
@@ -18,7 +55,9 @@ function App() {
     const savedUser = localStorage.getItem(`${AUTH_STORAGE_KEY}_user`);
     return savedUser ? JSON.parse(savedUser) : null;
   });
+  
   const [isLoading, setIsLoading] = useState(true);
+  const [initialPath, setInitialPath] = useState('/');
 
   useEffect(() => {
     checkAuthStatus();
@@ -40,6 +79,12 @@ function App() {
         console.log('checkAuthStatus - User is not signed in');
         setIsAuthenticated(false);
         setUser(null);
+        
+        // Store current path if not login page
+        if (!window.location.pathname.includes('/login')) {
+          console.log('checkAuthStatus - Storing current path for redirect:', window.location.pathname);
+          localStorage.setItem(LAST_ROUTE_KEY, window.location.pathname);
+        }
         return;
       }
       
@@ -57,8 +102,25 @@ function App() {
           console.log('checkAuthStatus - Setting user data from localStorage');
           setUser(userData);
           setIsAuthenticated(true);
+          
+          // Get the current path and the last saved route
+          const currentPath = window.location.pathname;
+          const lastRoute = localStorage.getItem(LAST_ROUTE_KEY);
+          
+          console.log('checkAuthStatus - Current path:', currentPath);
+          console.log('checkAuthStatus - Last saved route:', lastRoute);
+          
+          // If we're on the root path and have a last route, navigate there
+          if (currentPath === '/' && lastRoute && lastRoute !== '/') {
+            console.log('checkAuthStatus - Redirecting to last route:', lastRoute);
+            // Use a small timeout to ensure the router is ready
+            setTimeout(() => {
+              window.history.replaceState({}, '', lastRoute);
+              window.location.reload(); // Force a reload to ensure components update
+            }, 100);
+          }
         } else {
-          console.log('checkAuthStatus - Invalid user data, logging out');
+          console.error('checkAuthStatus - Error parsing user data');
           await handleLogout();
         }
       } catch (error) {
@@ -119,13 +181,33 @@ function App() {
   }
 
   return (
-    <div className="App">
-      {isAuthenticated ? (
-        <Dashboard onLogout={handleLogout} user={user} />
-      ) : (
-        <Login onLogin={handleLogin} />
-      )}
-    </div>
+    <Router>
+      <div className="min-h-screen bg-gray-100">
+        <Routes>
+          <Route path="/login" element={
+            isAuthenticated ? (
+              <Navigate to={"/"} replace />
+            ) : (
+              <Login onLogin={handleLogin} />
+            )
+          } />
+          
+          {/* Protected Routes */}
+          <Route element={
+            <RouteGuard isAuthenticated={isAuthenticated} isLoading={isLoading} />
+          }>
+            <Route path="/" element={<Dashboard user={user} onLogout={handleLogout} />} />
+            <Route path="/sheet/:id" element={
+              <SheetEditor 
+                onLogout={handleLogout}
+                user={user}
+              />
+            } />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </div>
+    </Router>
   );
 }
 

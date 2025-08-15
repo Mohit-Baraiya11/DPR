@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { FileSpreadsheet, RefreshCw, LogOut, Edit3, Plus } from 'lucide-react';
 import googleAuthService from '../services/googleAuth.js';
-import SheetEditor from './SheetEditor.jsx';
 import { FiChevronUp, FiChevronDown, FiLogOut } from 'react-icons/fi';
 
 const Dashboard = ({ onLogout, user }) => {
   console.log('Dashboard - User prop:', user);
   const [spreadsheets, setSpreadsheets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedSheet, setSelectedSheet] = useState(null);
+  const navigate = useNavigate();
   const [error, setError] = useState('');
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
@@ -71,15 +71,9 @@ const Dashboard = ({ onLogout, user }) => {
     });
   };
 
-  if (selectedSheet) {
-    return (
-      <SheetEditor 
-        sheet={selectedSheet} 
-        onBack={() => setSelectedSheet(null)}
-        onLogout={onLogout}
-      />
-    );
-  }
+  const handleSheetClick = (sheet) => {
+    navigate(`/sheet/${sheet.id}`);
+  };
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -158,7 +152,7 @@ const Dashboard = ({ onLogout, user }) => {
               <div
                 key={sheet.id}
                 className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => setSelectedSheet(sheet)}
+                onClick={() => handleSheetClick(sheet)}
               >
                 <div className="flex items-start space-x-3">
                   <FileSpreadsheet className="h-8 w-8 text-green-600 mt-1" />
