@@ -11,7 +11,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError as GoogleHttpError
-from src.prompt_builder import process_user_query
+from src.prompt_builder import process_user_query, process_logs_query
 from dotenv import load_dotenv
 import uvicorn
 import logging
@@ -71,7 +71,12 @@ class UpdateSheetRequest(BaseModel):
     spreadsheet_id: str
     sheet_name: str = "Sheet1"
     user_query: str
-    site_engineer_name: str = "Unknown"  # Add site_engineer_name field
+    site_engineer_name: str = "Unknown"
+
+class LogsQueryRequest(BaseModel):
+    spreadsheet_id: str
+    query: str
+    max_logs: int = 100  # Default to last 100 logs  # Add site_engineer_name field
 
 # -----------------------------
 # Helper function to get Sheets service
@@ -661,6 +666,79 @@ async def update_sheet(
         return {
             "status": "error",
             "message": f"Failed to update sheet: {str(e)}"
+        }
+
+# -----------------------------
+# -----------------------------
+# New endpoint: query_logs
+# -----------------------------
+@app.post("/api/query-logs")
+async def query_logs(request: LogsQueryRequest):
+    """
+    Query the logs in the spreadsheet.
+    
+    Args:
+        request: Contains:
+            - spreadsheet_id: ID of the spreadsheet
+            - query: The user's query about the logs
+            - max_logs: Maximum number of logs to retrieve (default: 100)
+            
+    Returns:
+        A response containing the answer to the user's query
+    """
+    try:
+        service = get_sheets_service()
+        
+        # Ensure LOG sheet exists
+        log_sheet_id = ensure_log_sheet_exists(service, request.spreadsheet_id)
+        if log_sheet_id is None:
+            return {"status": "error", "message": "Could not access or create LOG sheet"}
+        
+        # Get the log data
+        result = service.spreadsheets().values().get(
+            spreadsheetId=request.spreadsheet_id,
+            range="'LOG'!A2:L" + str(request.max_logs + 1),  # +1 because of 1-based indexing
+            valueRenderOption='UNFORMATTED_VALUE'
+        ).execute()
+        
+        # If no logs found, return empty response
+        if 'values' not in result or not result['values']:
+            return {
+                "status": "success",
+                "result": "No log entries found in the spreadsheet.",
+                "logs_analyzed": 0
+            }
+        
+        # Convert the log data to a list of dictionaries
+        headers = [
+            'time', 'site_engineer_name', 'Location', 'Sub Location',
+            'Peta Location', 'Category', 'updation', 'requested_quantity',
+            'updated_quantity', 'user_query', 'feedback', 'updated_cell'
+        ]
+        
+        logs = []
+        for row in result['values']:
+            if len(row) < len(headers):
+                # Pad the row with empty strings if it's shorter than the headers
+                row = row + [''] * (len(headers) - len(row))
+            log_entry = dict(zip(headers, row[:len(headers)]))
+            logs.append(log_entry)
+        
+        # Process the query using the log agent
+        result = process_logs_query(logs, request.query)
+        
+        return {
+            "status": "success",
+            "result": result,
+            "logs_analyzed": len(logs)
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": f"An error occurred while processing your query: {str(e)}"
         }
 
 # -----------------------------
