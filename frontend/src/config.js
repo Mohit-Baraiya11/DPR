@@ -3,7 +3,13 @@ export const GOOGLE_CONFIG = {
   API_KEY: import.meta.env.VITE_GOOGLE_API_KEY || 'AIzaSyC8jHTVcNQrVNXmvXRQfIgdWMIU7wHiF-4',
   DISCOVERY_DOCS: [
     'https://sheets.googleapis.com/$discovery/rest?version=v4',
-    'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'
+    'https://people.googleapis.com/$discovery/rest?version=v1'
   ],
-  SCOPES: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly'
+  SCOPES: [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'openid'
+  ].join(' ')
 };

@@ -2,12 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { FileSpreadsheet, RefreshCw, LogOut, Edit3, Plus } from 'lucide-react';
 import googleAuthService from '../services/googleAuth.js';
 import SheetEditor from './SheetEditor.jsx';
+import { FiChevronUp, FiChevronDown, FiLogOut } from 'react-icons/fi';
 
-const Dashboard = ({ onLogout }) => {
+const Dashboard = ({ onLogout, user }) => {
+  console.log('Dashboard - User prop:', user);
   const [spreadsheets, setSpreadsheets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedSheet, setSelectedSheet] = useState(null);
   const [error, setError] = useState('');
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
   useEffect(() => {
     fetchSpreadsheets();
@@ -94,13 +97,36 @@ const Dashboard = ({ onLogout }) => {
                 <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                 Refresh
               </button>
-              <button
-                onClick={handleSignOut}
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-              >
-                <LogOut className="h-4 w-4 mr-2" />
-                Sign Out
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
+                  className="flex items-center space-x-2 focus:outline-none"
+                >
+                  <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white">
+                    {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                  </div>
+                  <span className="text-sm font-medium">{user?.name || 'User'}</span>
+                  {isProfileDropdownOpen ? <FiChevronUp /> : <FiChevronDown />}
+                </button>
+                
+                {isProfileDropdownOpen && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-10">
+                    <div className="px-4 py-2">
+                      <p className="text-sm font-medium">{user?.name || 'User'}</p>
+                      <p className="text-xs text-gray-500 truncate">{user?.email || ''}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        onLogout();
+                        setIsProfileDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center"
+                    >
+                      <FiLogOut className="mr-2" /> Sign Out
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
