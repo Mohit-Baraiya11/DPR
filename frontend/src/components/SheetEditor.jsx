@@ -1,25 +1,44 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, RefreshCw, Plus, Trash2, Edit2, Type, LogOut } from 'lucide-react';
+import { ArrowLeft, Send, RefreshCw, LogOut, MessageSquare, User } from 'lucide-react';
 import googleAuthService from '../services/googleAuth';
+
+// Chat message component
+const ChatMessage = ({ message, isUser }) => (
+  <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
+    <div className={`flex max-w-xs md:max-w-md lg:max-w-lg xl:max-w-2xl ${isUser ? 'flex-row-reverse' : ''}`}>
+      <div className={`flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center ${isUser ? 'ml-3 bg-gray-200 text-gray-700' : 'mr-3 bg-gray-200 text-gray-700'}`}>
+        {isUser ? <User size={16} /> : <MessageSquare size={16} />}
+      </div>
+      <div className={`px-4 py-2 rounded-lg ${isUser ? 'bg-gray-200 text-gray-900' : 'bg-white border border-gray-200'}`}>
+        <p className="text-sm">{message}</p>
+      </div>
+    </div>
+  </div>
+);
 
 const SheetEditor = ({ onLogout }) => {
   const { id: sheetId } = useParams();
   const navigate = useNavigate();
   const [sheet, setSheet] = useState(null);
-  const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [editingCell, setEditingCell] = useState(null);
-  const [editValue, setEditValue] = useState('');
-  const [isPrinting, setIsPrinting] = useState(false);
+  const [messages, setMessages] = useState([
+    { id: 1, text: 'Hello! I can help you analyze and understand your spreadsheet data. What would you like to know?', isUser: false }
+  ]);
+  const [inputMessage, setInputMessage] = useState('');
+  const messagesEndRef = useRef(null);
+
+  // Auto-scroll to bottom of messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const fetchSheetData = async (id) => {
     try {
       setLoading(true);
       setError('');
-      console.log('Fetching data for sheet ID:', id);
+      console.log('Fetching sheet metadata for ID:', id);
       
       // First, ensure we're properly authenticated
       const authInfo = googleAuthService.getAuthInfo();
@@ -35,30 +54,18 @@ const SheetEditor = ({ onLogout }) => {
         }
       }
       
-      // Get both sheet data and metadata in parallel
-      const [sheetData, metadata] = await Promise.all([
-        googleAuthService.getSheetData(id),
-        googleAuthService.getSpreadsheetMetadata(id)
-      ]);
+      // Get sheet metadata
+      const metadata = await googleAuthService.getSpreadsheetMetadata(id);
       
-      console.log('Received sheet data:', sheetData);
+      console.log('Received sheet metadata:', metadata);
       
       // Update sheet metadata
       setSheet({
         id,
-        name: metadata.properties.title,
-        ...sheetData
+        name: metadata.properties.title
       });
       
-      // Update data state
-      if (!sheetData || !sheetData.values) {
-        console.warn('No data returned from sheet, initializing empty data');
-        setData([[]]);
-      } else {
-        setData(sheetData.values);
-      }
-      
-      return sheetData;
+      return metadata;
       
     } catch (error) {
       console.error('Error in fetchSheetData:', {
@@ -99,119 +106,47 @@ const SheetEditor = ({ onLogout }) => {
   // Alias for backward compatibility
   const fetchSheetContent = fetchSheetData;
 
-  const handleCellEdit = (rowIndex, colIndex) => {
-    const currentValue = data[rowIndex] ? data[rowIndex][colIndex] || '' : '';
-    setEditingCell({ row: rowIndex, col: colIndex });
-    setEditValue(currentValue);
-  };
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!inputMessage.trim()) return;
 
-  const handleCellSave = async () => {
-    if (!editingCell) return;
+    // Add user message
+    const userMessage = {
+      id: messages.length + 1,
+      text: inputMessage,
+      isUser: true,
+      timestamp: new Date().toISOString()
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setInputMessage('');
 
     try {
-      setSaving(true);
-      const { row, col } = editingCell;
-      
-      // Update local data
-      const newData = [...data];
-      while (newData.length <= row) {
-        newData.push([]);
-      }
-      while (newData[row].length <= col) {
-        newData[row].push('');
-      }
-      newData[row][col] = editValue;
-      setData(newData);
-
-      // Update Google Sheets
-      const range = `A${row + 1}:${String.fromCharCode(65 + col)}${row + 1}`;
-      await googleAuthService.updateSheetData(sheetId, range, [[editValue]]);
-
-      setEditingCell(null);
-      setEditValue('');
+      // Here you would typically call your AI/backend service
+      // For now, we'll just echo the message
+      setTimeout(() => {
+        const botMessage = {
+          id: messages.length + 2,
+          text: `I received your message: "${inputMessage}"`,
+          isUser: false,
+          timestamp: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, botMessage]);
+      }, 1000);
     } catch (error) {
-      console.error('Error updating cell:', error);
-      setError('Failed to update cell. Please try again.');
-    } finally {
-      setSaving(false);
+      console.error('Error sending message:', error);
+      setError('Failed to send message. Please try again.');
     }
   };
-
-  const handleAddRow = async () => {
-    try {
-      setSaving(true);
-      const newRow = new Array(Math.max(5, data[0]?.length || 0)).fill('');
-      const newData = [...data, newRow];
-      setData(newData);
-
-      // Add row to Google Sheets
-      const range = `A${newData.length}`;
-      await googleAuthService.appendSheetData(sheet.id, range, [newRow]);
-    } catch (error) {
-      console.error('Error adding row:', error);
-      setError('Failed to add row. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handlePrintHelloWorld = async () => {
-    try {
-      setIsPrinting(true);
-      setError('');
-      
-      // Get the auth token
-      const authInfo = googleAuthService.getAuthInfo();
-      if (!authInfo || !authInfo.hasToken) {
-        await googleAuthService.signIn();
-      }
-      
-      // Call the backend endpoint
-      const response = await fetch('http://localhost:8000/api/print-hello-world', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${googleAuthService.gapi.client.getToken().access_token}`
-        },
-        body: JSON.stringify({
-          spreadsheet_id: sheet.id,
-          sheet_name: 'Sheet1',
-          row_count: 10
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to print Hello World');
-      }
-
-      // Refresh the sheet data to show the changes
-      if (sheet?.id) {
-        await fetchSheetData(sheet.id);
-      }
-      
-    } catch (error) {
-      console.error('Error printing Hello World:', error);
-      setError(`Failed to print Hello World: ${error.message}`);
-    } finally {
-      setIsPrinting(false);
-    }
-  };
-
-  const getColumnLetter = (index) => {
-    return String.fromCharCode(65 + index);
-  };
-
-  const maxColumns = Math.max(...data.map(row => row?.length || 0), 5);
 
   const handleBack = () => {
     navigate('/');
   };
 
   return (
-    <div className={`min-h-screen bg-gray-50 ${isPrinting ? 'p-8' : ''}`}>
+    <div className="min-h-screen bg-gray-100 flex flex-col">
       {/* Header */}
-      <div className={`bg-white ${isPrinting ? 'hidden' : 'sticky top-0 z-10 shadow-sm border-b'}`}>
+      <div className="bg-white shadow-sm border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-4">
@@ -223,138 +158,73 @@ const SheetEditor = ({ onLogout }) => {
                 Back to Sheets
               </button>
               <h1 className="text-lg font-medium text-gray-900">
-                {sheet?.name || 'Loading...'}
+                {sheet?.name || 'Chat with Sheet'}
               </h1>
             </div>
-            <div className="flex space-x-4">
-              <button
-                onClick={() => fetchSheetContent(sheetId)}
-                disabled={loading}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-              >
-                <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
-              <button
-                onClick={handleAddRow}
-                disabled={saving}
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add Row
-              </button>
-              <button
-                onClick={handlePrintHelloWorld}
-                disabled={isPrinting || saving}
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
-              >
-                <Type className={`h-4 w-4 mr-2 ${isPrinting ? 'animate-pulse' : ''}`} />
-                {isPrinting ? 'Printing...' : 'Hello World'}
-              </button>
-            </div>
+            <button
+              onClick={onLogout}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Sign out
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
-            <p className="text-red-800">{error}</p>
-          </div>
-        )}
+      {/* Chat Container */}
+      <div className="flex-1 overflow-hidden flex flex-col max-w-4xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+          {messages.map((message) => (
+            <ChatMessage 
+              key={message.id} 
+              message={message.text} 
+              isUser={message.isUser} 
+            />
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <RefreshCw className="h-8 w-8 animate-spin text-gray-400" />
-            <span className="ml-3 text-gray-600">Loading sheet data...</span>
+        {/* Input Area */}
+        <form onSubmit={handleSendMessage} className="mt-4">
+          <div className="flex items-center bg-white rounded-lg shadow-sm border border-gray-300 overflow-hidden">
+            <input
+              type="text"
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              placeholder="Ask me anything about your sheet..."
+              className="flex-1 px-4 py-3 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!inputMessage.trim()}
+              className="px-4 py-3 bg-primary-600 text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Send className="h-5 w-5" />
+            </button>
           </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
-                      #
-                    </th>
-                    {Array.from({ length: maxColumns }, (_, colIndex) => (
-                      <th
-                        key={colIndex}
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                      >
-                        {getColumnLetter(colIndex)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {data.map((row, rowIndex) => (
-                    <tr key={rowIndex} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 bg-gray-50">
-                        {rowIndex + 1}
-                      </td>
-                      {Array.from({ length: maxColumns }, (_, colIndex) => (
-                        <td key={colIndex} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {editingCell?.row === rowIndex && editingCell?.col === colIndex ? (
-                            <div className="flex items-center space-x-2">
-                              <input
-                                type="text"
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                className="block w-full px-3 py-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    handleCellSave();
-                                  } else if (e.key === 'Escape') {
-                                    setEditingCell(null);
-                                    setEditValue('');
-                                  }
-                                }}
-                                autoFocus
-                              />
-                              <button
-                                onClick={handleCellSave}
-                                disabled={saving}
-                                className="inline-flex items-center px-2 py-1 border border-transparent text-xs font-medium rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
-                              >
-                                <Save className="h-3 w-3" />
-                              </button>
-                            </div>
-                          ) : (
-                            <div
-                              className="cursor-pointer hover:bg-gray-100 p-1 rounded min-h-[24px] flex items-center"
-                              onClick={() => handleCellEdit(rowIndex, colIndex)}
-                            >
-                              {row && row[colIndex] ? row[colIndex] : (
-                                <span className="text-gray-400 text-xs">Click to edit</span>
-                              )}
-                              <Edit2 className="h-3 w-3 ml-2 text-gray-400 opacity-0 group-hover:opacity-100" />
-                            </div>
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {data.length === 0 && (
-              <div className="text-center py-12">
-                <p className="text-gray-500">No data found in this sheet</p>
-                <button
-                  onClick={handleAddRow}
-                  className="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add First Row
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+          <p className="mt-2 text-xs text-gray-500 text-center">
+            Ask questions about your data or request analysis
+          </p>
+        </form>
       </div>
+
+      {/* Error Message */}
+      {error && (
+        <div className="fixed bottom-4 right-4 max-w-sm bg-red-50 border-l-4 border-red-400 p-4 rounded shadow-lg">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <svg className="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <div className="ml-3">
+              <p className="text-sm text-red-700">{error}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
