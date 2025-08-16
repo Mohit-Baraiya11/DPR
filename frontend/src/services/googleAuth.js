@@ -498,6 +498,14 @@ class GoogleAuthService {
     };
   }
 
+  getAccessToken() {
+    const token = this.gapi?.client?.getToken();
+    if (!token?.access_token) {
+      throw new Error('No access token available. Please sign in again.');
+    }
+    return token.access_token;
+  }
+
   async getSpreadsheets() {
     try {
       const response = await fetch('https://www.googleapis.com/drive/v3/files?' + new URLSearchParams({
