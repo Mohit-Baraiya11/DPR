@@ -1,42 +1,36 @@
 import os
 import string
 from datetime import datetime
-from fastapi import FastAPI, Request, Header, HTTPException, Depends
+from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, HttpUrl
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
+from typing import Optional, List
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError as GoogleHttpError
 from src.prompt_builder import process_user_query, process_logs_query
 from dotenv import load_dotenv
+from datetime import datetime
 import uvicorn
-import logging
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
-app = FastAPI(
-    title="SMART DPR Backend",
-    description="Backend service for DPR application with Google Sheets integration",
-    version="1.0.0"
-)
-
-# Security
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+app = FastAPI(title="SMART DPR Backend")
 
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-       "*"
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://localhost:8000"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -73,92 +67,35 @@ class UpdateSheetRequest(BaseModel):
 class LogsQueryRequest(BaseModel):
     spreadsheet_id: str
     query: str
-    max_logs: int = 100  # Default to last 100 logs  # Add site_engineer_name field
+    max_logs: int = 100  # Default to last 100 logs
 
 # -----------------------------
 # Helper function to get Sheets service
 # -----------------------------
-async def get_user_credentials(authorization: str = Header(..., alias="Authorization", description="Google OAuth token")):
-    """Get user credentials from the authorization header."""
-    print(f"Received authorization header: {authorization}")
-    
+def get_sheets_service(token: str = Depends(oauth2_scheme)):
     try:
-        # Validate the authorization header
-        if not authorization or not isinstance(authorization, str):
-            print("Error: No authorization header or not a string")
-            raise HTTPException(
-                status_code=401,
-                detail="Missing or invalid authorization header"
-            )
-        
-        # Remove any surrounding whitespace
-        auth_header = authorization.strip()
-        print(f"Stripped auth header: {auth_header}")
-        
-        # Check if it starts with 'Bearer '
-        if not auth_header.startswith("Bearer "):
-            print("Error: Authorization header doesn't start with 'Bearer '")
-            raise HTTPException(
-                status_code=401,
-                detail="Authorization header must start with 'Bearer '"
-            )
-        
-        # Extract the token part after 'Bearer '
-        try:
-            token_parts = auth_header.split(" ", 1)
-            print(f"Token parts: {token_parts}")
-            if len(token_parts) < 2 or not token_parts[1]:
-                print("Error: Token is empty or malformed")
-                raise IndexError
-                
-            token = token_parts[1]
-            print(f"Extracted token: {token[:10]}...{token[-10:]}")  # Log first and last 10 chars for security
-            
-            # Create credentials with the token
-            print("Creating credentials...")
-            creds = Credentials(
-                token=token,
-                scopes=[
-                    "https://www.googleapis.com/auth/spreadsheets",
-                    "https://www.googleapis.com/auth/drive.readonly"
-                ]
-            )
-            
-            # Verify the token is valid by making a test request
-            print("Building OAuth2 service...")
-            service = build('oauth2', 'v2', credentials=creds)
-            print("Making userinfo request...")
-            user_info = service.userinfo().get().execute()
-            print(f"Successfully authenticated user: {user_info.get('email')}")
-            return token
-            
-        except IndexError as ie:
-            print(f"IndexError: {str(ie)}")
-            raise HTTPException(
-                status_code=401,
-                detail="Missing token in Authorization header. Format: 'Bearer <token>'"
-            )
-        except Exception as e:
-            print(f"Token validation error: {str(e)}")
-            print(f"Error type: {type(e).__name__}")
-            raise HTTPException(
-                status_code=401,
-                detail=f"Google OAuth token validation failed: {str(e)}"
-            )
-            
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        print(f"Unexpected error in get_user_credentials: {str(e)}")
-        print(f"Error type: {type(e).__name__}")
-        raise HTTPException(
-            status_code=500,
-            detail="An unexpected error occurred during authentication"
+        creds = Credentials(
+            token=token,
+            token_uri=os.getenv("GOOGLE_TOKEN_URI"),
+            client_id=os.getenv("GOOGLE_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
+        
+        # Check if the token is valid and refresh if necessary
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
+                creds.refresh(GoogleRequest())
+            else:
+                # This part might need to be improved depending on how refresh tokens are handled client-side
+                pass
 
-def get_sheets_service(creds: Credentials):
-    """Get Google Sheets service using user credentials."""
-    return build('sheets', 'v4', credentials=creds, cache_discovery=False)
+        return build('sheets', 'v4', credentials=creds)
+    except Exception as e:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Invalid authentication credentials: {str(e)}"
+        )
 
 def ensure_log_sheet_exists(service, spreadsheet_id):
     """Ensure LOG sheet exists and has the correct headers."""
@@ -273,116 +210,29 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # Existing Hello World endpoint
 # -----------------------------
 @app.post("/api/print-hello-world")
-async def print_hello_world(
-    request: HelloWorldRequest,
-    authorization: str = Header(..., alias="Authorization", description="Google OAuth token with 'Bearer ' prefix")
-):
-    """Example endpoint that writes to a Google Sheet using the user's OAuth token.
+async def print_hello_world(request: HelloWorldRequest, service=Depends(get_sheets_service)):
     
-    Required headers:
-    - Authorization: Bearer <google_oauth_token>
-    
-    Required scopes:
-    - https://www.googleapis.com/auth/spreadsheets
-    """
-    try:
-        # Get token from authorization header
-        token = await get_user_credentials(authorization)
-        
-        # Create credentials with the token
-        creds = Credentials(
-            token=token,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
-        
-        # Verify the token is valid
-        service = build('sheets', 'v4', credentials=creds, cache_discovery=False)
-        
-        # Prepare the data to write
-        values = [[f"Hello World {i+1}" for i in range(request.row_count)]]
-        range_name = f"{request.sheet_name}!A1:A{request.row_count}"
-        
-        # Make the API call to update the sheet
-        result = service.spreadsheets().values().update(
-            spreadsheetId=request.spreadsheet_id,
-            range=range_name,
-            valueInputOption="USER_ENTERED",
-            body={'values': values, 'majorDimension': 'COLUMNS'}
-        ).execute()
-        
-        return {
-            "status": "success",
-            "updated_cells": result.get('updatedCells'),
-            "message": f"Successfully updated {result.get('updatedCells')} cells in {request.sheet_name}",
-            "range": range_name
-        }
-        
-    except GoogleHttpError as e:
-        error_details = e.content.decode('utf-8') if e.content else str(e)
-        logger.error(f"Google API error: {error_details}")
-        raise HTTPException(
-            status_code=e.status_code,
-            detail=f"Google Sheets API error: {error_details}"
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred: {str(e)}"
-        )
+    spreadsheet_id = request.spreadsheet_id
+    sheet_name = request.sheet_name
+    row_count = request.row_count
+
+    values = [[f"Hello World {i+1}" for i in range(row_count)]]
+    range_name = f"{sheet_name}!A1:A{row_count}"
+    body = {'values': values, 'majorDimension': 'COLUMNS'}
+
+    result = service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=range_name,
+        valueInputOption="USER_ENTERED",
+        body=body
+    ).execute()
+    return {"status": "success", "updated_cells": result.get('updatedCells')}
 
 # -----------------------------
 # New endpoint: get_sheet_info
 # -----------------------------
 @app.post("/api/get-sheet-info")
-async def get_sheet_info(
-    request: SheetInfoRequest,
-    authorization: str = Header(..., alias="Authorization", description="Google OAuth token with 'Bearer ' prefix")
-):
-    """Get sheet information using the user's OAuth token.
-    
-    Required headers:
-    - Authorization: Bearer <google_oauth_token>
-    
-    Required scopes:
-    - https://www.googleapis.com/auth/spreadsheets
-    - https://www.googleapis.com/auth/drive.readonly
-    """
-    # Validate and get user credentials from the token
-    if not authorization or not isinstance(authorization, str) or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid authorization header. Must be 'Bearer <token>'"
-        )
-    
-    # Extract the token part after 'Bearer '
-    try:
-        token = authorization.split(" ")[1]
-        print(authorization)
-    except IndexError:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid authorization header format. Must be 'Bearer <token>'"
-        )
-    try:
-        creds = Credentials(
-            token=token,
-            scopes=[
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive.readonly"
-            ]
-        )
-        # Verify the token is valid
-        service = build('oauth2', 'v2', credentials=creds)
-        service.userinfo().get().execute()
-    except Exception as e:
-        logger.error(f"Authentication failed: {str(e)}")
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired Google OAuth token"
-        )
-    
-    service = get_sheets_service(creds)
+async def get_sheet_info(request: SheetInfoRequest, service=Depends(get_sheets_service)):
     sheet = service.spreadsheets().values().get(
         spreadsheetId=request.spreadsheet_id,
         range=request.sheet_name
@@ -452,89 +302,64 @@ async def get_sheet_info(
 # New endpoint: update_sheet
 # -----------------------------
 @app.post("/api/update-sheet")
-async def update_sheet(
-    request: UpdateSheetRequest,
-    authorization: str = Header(..., alias="Authorization", description="Google OAuth token with 'Bearer ' prefix")
-):
+async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_service), site_engineer_name: str = Depends(oauth2_scheme)):
     try:
-        # Get token from authorization header and validate it
-        token = await get_user_credentials(authorization)
-        
-        # Create credentials with the token
-        creds = Credentials(
-            token=token,
-            refresh_token=None,
-            token_uri='https://oauth2.googleapis.com/token',
-            client_id=None,
-            client_secret=None,
-            scopes=[
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive.readonly"
-            ]
-        )
-        
-        # Refresh the token if needed
-        if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        
-        # Get the service first
-        service = get_sheets_service(creds)
-        
-        # Get the sheet data directly instead of calling the endpoint
-        try:
-            # First, get the list of all sheets in the spreadsheet
-            spreadsheet = service.spreadsheets().get(
-                spreadsheetId=request.spreadsheet_id
-            ).execute()
-            
-            # Log all available sheet names for debugging
-            sheet_names = [sheet['properties']['title'] for sheet in spreadsheet.get('sheets', [])]
-            print(f"Available sheets: {sheet_names}")
-            
-            # Try to find the requested sheet (case-insensitive)
-            target_sheet = None
-            for sheet in spreadsheet.get('sheets', []):
-                if sheet['properties']['title'].lower() == request.sheet_name.lower():
-                    target_sheet = sheet['properties']['title']
+        # First get the sheet data
+        sheet = service.spreadsheets().values().get(
+            spreadsheetId=request.spreadsheet_id,
+            range=request.sheet_name
+        ).execute()
+
+        # Manually process sheet_info as it's done in get_sheet_info
+        values = sheet.get("values", [])
+        if not values or len(values) < 2:
+            return {"status": "error", "message": "No data found in the sheet"}
+
+        header_row = values[1]
+        breakpoint_index = 0
+        for i, col in enumerate(header_row):
+            if col.strip() == "":
+                breakpoint_index = i
+                break
+        else:
+            breakpoint_index = len(header_row)
+        headers_before_break = header_row[:breakpoint_index]
+
+        row_index_data = {}
+        empty_row_count = 0
+        max_consecutive_empty = 4
+        for idx, row in enumerate(values[2:], start=3):
+            is_empty = all((cell.strip() == "" if isinstance(cell, str) else True) for cell in row[:breakpoint_index])
+            if is_empty:
+                empty_row_count += 1
+                if empty_row_count >= max_consecutive_empty:
                     break
-            
-            if not target_sheet:
-                return {
-                    "status": "error", 
-                    "message": f"Sheet '{request.sheet_name}' not found. Available sheets: {', '.join(sheet_names)}"
-                }
-            
-            # Format the sheet name with single quotes if it contains spaces or special characters
-            sheet_name = target_sheet
-            if ' ' in sheet_name or '-' in sheet_name or '!' in sheet_name:
-                sheet_name = f"'{sheet_name}'"
-            
-            print(f"Fetching data from sheet: {sheet_name}")
-            
-            # Try to get the sheet data
-            sheet = service.spreadsheets().values().get(
-                spreadsheetId=request.spreadsheet_id,
-                range=target_sheet  # Use the exact sheet name from the spreadsheet
-            ).execute()
-            
-            values = sheet.get("values", [])
-            if not values or len(values) < 2:
-                return {
-                    "status": "error", 
-                    "message": f"No data found in sheet '{target_sheet}'. The sheet exists but appears to be empty."
-                }
-                
-            # Format the response to match what get_sheet_info would return
-            sheet_info = {
-                "status": "success",
-                "data": {
-                    "values": values,
-                    "sheet_name": target_sheet
-                }
-            }
-        except Exception as e:
-            logger.error(f"Failed to fetch sheet data: {str(e)}")
-            return {"status": "error", "message": f"Failed to fetch sheet data: {str(e)}"}
+                continue
+            else:
+                empty_row_count = 0
+            row_data = row[:breakpoint_index] + [""] * (len(headers_before_break) - len(row))
+            row_index_data[idx] = dict(zip(headers_before_break, row_data))
+
+        column_index_data = {}
+        col_letters = list(string.ascii_uppercase)
+        col_letters += [a + b for a in string.ascii_uppercase for b in string.ascii_uppercase]
+        found_non_empty = False
+        for i in range(breakpoint_index, len(header_row)):
+            col_name = header_row[i] if i < len(header_row) else ""
+            if col_name.strip() != "":
+                found_non_empty = True
+                column_index_data[col_letters[i]] = col_name
+            elif found_non_empty:
+                break
+
+        sheet_info = {
+            "status": "success",
+            "ROW_INDEX": row_index_data,
+            "COLUMN_INDEX": column_index_data
+        }
+        
+        if sheet_info.get("status") != "success":
+            return {"status": "error", "message": "Failed to fetch sheet data"}
          
         
         ACTION_PROMPT = f"""
@@ -566,7 +391,6 @@ async def update_sheet(
         print(f"Feedbacks: {feedbacks}")
         
         # Get Google Sheets service
-        service = get_sheets_service(creds)
         today = datetime.now().strftime("%Y-%m-%d")
         
         # Get both sheet IDs (main sheet and QNT sheet) from the same spreadsheet
@@ -766,7 +590,7 @@ async def update_sheet(
                     # Create log entry
                     log_entry = [
                         datetime.now().strftime('%Y-%m-%d %H:%M:%S'),  # time
-                        request.site_engineer_name,                    # site_engineer_name
+                        site_engineer_name,                    # site_engineer_name
                         str(row_values[0]) if len(row_values) > 0 else '',  # Location
                         str(row_values[1]) if len(row_values) > 1 else '',  # Sub Location
                         str(row_values[2]) if len(row_values) > 2 else '',  # Peta Location
@@ -828,22 +652,13 @@ async def update_sheet(
         }
 
 # -----------------------------
+# -----------------------------
 # New endpoint: query_logs
 # -----------------------------
 @app.post("/api/query-logs")
-async def query_logs(
-    request: LogsQueryRequest,
-    authorization: str = Header(..., alias="Authorization", description="Google OAuth token with 'Bearer ' prefix")
-):
+async def query_logs(request: LogsQueryRequest, service=Depends(get_sheets_service), site_engineer_name: str = Depends(oauth2_scheme)):
     """
     Query the logs in the spreadsheet.
-    
-    Required headers:
-    - Authorization: Bearer <google_oauth_token>
-    
-    Required scopes:
-    - https://www.googleapis.com/auth/spreadsheets
-    - https://www.googleapis.com/auth/drive.readonly
     
     Args:
         request: Contains:
@@ -854,33 +669,8 @@ async def query_logs(
     Returns:
         A response containing the answer to the user's query
     """
-    # Get token from authorization header
     try:
-        token = await get_user_credentials(authorization)
-        
-        # Create credentials with the token
-        creds = Credentials(
-            token=token,
-            scopes=[
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive.readonly"
-            ]
-        )
-        
-        # Get the sheets service
-        service = get_sheets_service(creds)
-    except HTTPException as he:
-        # Re-raise HTTP exceptions as they're already properly formatted
-        raise he
-    except Exception as e:
-        logger.error(f"Authentication failed: {str(e)}")
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired Google OAuth token"
-        )
-    
-    try:
-        
+            
         # Ensure LOG sheet exists
         log_sheet_id = ensure_log_sheet_exists(service, request.spreadsheet_id)
         if log_sheet_id is None:
@@ -917,7 +707,7 @@ async def query_logs(
             logs.append(log_entry)
         
         # Process the query using the log agent
-        result = process_logs_query(logs, request.query)
+        result = process_logs_query(logs, request.query, site_engineer_name)
         
         return {
             "status": "success",
@@ -937,57 +727,11 @@ async def query_logs(
 # Health check endpoint
 # -----------------------------
 @app.get("/api/health")
-async def health_check(
-    authorization: str = Header(..., alias="Authorization", description="Google OAuth token with 'Bearer ' prefix")
-):
-    """Health check endpoint.
-    
-    Required headers:
-    - Authorization: Bearer <google_oauth_token>
-    
-    Required scopes:
-    - https://www.googleapis.com/auth/userinfo.email
-    """
-    # Validate the authorization header
-    if not authorization or not isinstance(authorization, str) or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid authorization header. Must be 'Bearer <token>'"
-        )
-    
-    # Extract the token part after 'Bearer '
-    try:
-        token = authorization.split(" ")[1]
-        print(authorization)
-    except IndexError:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid authorization header format. Must be 'Bearer <token>'"
-        )
-        
-    try:
-        creds = Credentials(
-            token=token,
-            scopes=["https://www.googleapis.com/auth/userinfo.email"]
-        )
-        # Verify the token is valid
-        service = build('oauth2', 'v2', credentials=creds)
-        service.userinfo().get().execute()
-    except Exception as e:
-        logger.error(f"Health check authentication failed: {str(e)}")
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired Google OAuth token"
-        )
+async def health_check():
     return {"status": "ok"}
 
 # -----------------------------
 # Main entry
 # -----------------------------
 if __name__ == "__main__":
-    uvicorn.run(
-        "app:app",
-        host=os.getenv("HOST", "0.0.0.0"),
-        port=int(os.getenv("PORT", 8000)),
-        reload=os.getenv("ENVIRONMENT", "development") == "development"
-    )
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

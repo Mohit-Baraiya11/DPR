@@ -80,9 +80,9 @@ const Dashboard = ({ onLogout, user }) => {
       {/* Header */}
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
+          <div className="flex flex-col sm:flex-row justify-between items-center py-4 gap-4 sm:gap-0">
             <h1 className="text-2xl font-bold text-gray-900">SMART DPR</h1>
-            <div className="flex space-x-4">
+            <div className="flex items-center space-x-2 sm:space-x-4">
               <button
                 onClick={fetchSpreadsheets}
                 disabled={loading}
@@ -99,7 +99,7 @@ const Dashboard = ({ onLogout, user }) => {
                   <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white">
                     {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
                   </div>
-                  <span className="text-sm font-medium">{user?.name || 'User'}</span>
+                  <span className="hidden sm:inline text-sm font-medium">{user?.name || 'User'}</span>
                   {isProfileDropdownOpen ? <FiChevronUp /> : <FiChevronDown />}
                 </button>
                 

@@ -50,7 +50,7 @@ def process_user_query(user_query):
     )
 
 
-def process_logs_query(logs_data: list[dict], user_query: str) -> str:
+def process_logs_query(logs_data: list[dict], user_query: str, site_engineer_name: str) -> str:
     """
     Process a query about the logs data.
     
@@ -84,6 +84,8 @@ def process_logs_query(logs_data: list[dict], user_query: str) -> str:
 {logs_context}
 
 User's question: {user_query}
+
+The user asking the question is: {site_engineer_name}
 
 Please provide a clear and concise response based on the log data above."""
         
