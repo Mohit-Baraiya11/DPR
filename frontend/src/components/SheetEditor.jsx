@@ -337,6 +337,7 @@ const SheetEditor = ({ onLogout }) => {
         : {
             spreadsheet_id: sheetId,
             query: messageText,
+            site_engineer_name: siteEngineerName,
             max_logs: 100
           };
 
@@ -376,14 +377,6 @@ const SheetEditor = ({ onLogout }) => {
       if (mode === 'update') {
         // Format for update mode
         botResponse = responseData.feedback || responseData.message || 'Update processed successfully';
-        
-        // Add update-specific details
-        if (responseData.updates_applied !== undefined) {
-          botResponse += `\n\nUpdates Applied: ${responseData.updates_applied}`;
-        }
-        if (responseData.updated_cells !== undefined) {
-          botResponse += `\nUpdated Cells: ${responseData.updated_cells}`;
-        }
       } else {
         // Format for chat/query mode - use result field from logs query
         botResponse = responseData.result || responseData.message || 'No results found';
