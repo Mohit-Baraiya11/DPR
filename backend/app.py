@@ -30,12 +30,14 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",
         "http://localhost:8080",
-        "http://localhost:8000"
+        "http://localhost:8000",
+        "https://smart-dpr-469205.uc.r.appspot.com"  # Production URL
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["*"]
+    expose_headers=["*"],
+    max_age=600  # Cache preflight requests for 10 minutes
 )
 
 # -----------------------------
@@ -302,7 +304,7 @@ async def get_sheet_info(request: SheetInfoRequest, service=Depends(get_sheets_s
 # New endpoint: update_sheet
 # -----------------------------
 @app.post("/api/update-sheet")
-async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_service)):
+async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_service), token: str = Depends(oauth2_scheme)):
     try:
         # First get the sheet data
         sheet = service.spreadsheets().values().get(
@@ -590,7 +592,7 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
                     # Create log entry
                     log_entry = [
                         datetime.now().strftime('%Y-%m-%d %H:%M:%S'),  # time
-                        request.site_engineer_name,                    # site_engineer_name
+request.site_engineer_name,                    # site_engineer_name
                         str(row_values[0]) if len(row_values) > 0 else '',  # Location
                         str(row_values[1]) if len(row_values) > 1 else '',  # Sub Location
                         str(row_values[2]) if len(row_values) > 2 else '',  # Peta Location
@@ -656,7 +658,7 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
 # New endpoint: query_logs
 # -----------------------------
 @app.post("/api/query-logs")
-async def query_logs(request: LogsQueryRequest, service=Depends(get_sheets_service)):
+async def query_logs(request: LogsQueryRequest, service=Depends(get_sheets_service), site_engineer_name: str = Depends(oauth2_scheme)):
     """
     Query the logs in the spreadsheet.
     
@@ -707,7 +709,7 @@ async def query_logs(request: LogsQueryRequest, service=Depends(get_sheets_servi
             logs.append(log_entry)
         
         # Process the query using the log agent
-        result = process_logs_query(logs, request.query, request.site_engineer_name)
+        result = process_logs_query(logs, request.query, site_engineer_name)
         
         return {
             "status": "success",

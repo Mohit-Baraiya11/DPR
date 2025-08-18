@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate, useOutlet } from 'react-router-dom';
 import Login from './components/Login.jsx';
-import Dashboard from './components/Dashboard.jsx';
 import SheetEditor from './components/SheetEditor.jsx';
 import googleAuthService from './services/googleAuth.js';
 
 // Key for storing auth state in localStorage
 const AUTH_STORAGE_KEY = 'dpr_auth_state';
 const LAST_ROUTE_KEY = 'dpr_last_route';
+const USER_INFO_KEY = 'dpr_user_info';
 
 // Route Guard component
 const RouteGuard = ({ isAuthenticated, isLoading }) => {
@@ -43,7 +43,8 @@ const RouteGuard = ({ isAuthenticated, isLoading }) => {
   return <>{outlet}</>;
 };
 
-function App() {
+// Create a wrapper component to handle the app logic
+function AppContent() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     // Initialize state from localStorage if available
     const savedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
@@ -52,120 +53,128 @@ function App() {
   
   const [user, setUser] = useState(() => {
     // Initialize user from localStorage if available
-    const savedUser = localStorage.getItem(`${AUTH_STORAGE_KEY}_user`);
+    const savedUser = localStorage.getItem(USER_INFO_KEY) || localStorage.getItem(`${AUTH_STORAGE_KEY}_user`);
     return savedUser ? JSON.parse(savedUser) : null;
   });
   
   const [isLoading, setIsLoading] = useState(true);
-  const [initialPath, setInitialPath] = useState('/');
+  const navigate = useNavigate();
+  const location = useLocation();
 
+  // Check authentication status on component mount
   useEffect(() => {
-    checkAuthStatus();
-  }, []);
-
-  const checkAuthStatus = async () => {
-    console.log('checkAuthStatus - Starting authentication check');
-    setIsLoading(true);
-    
-    try {
-      console.log('checkAuthStatus - Initializing Google Auth...');
-      await googleAuthService.initialize();
-      
-      // Check if user is already authenticated
-      const isSignedIn = await googleAuthService.isSignedIn();
-      console.log('checkAuthStatus - isSignedIn:', isSignedIn);
-      
-      if (!isSignedIn) {
-        console.log('checkAuthStatus - User is not signed in');
-        setIsAuthenticated(false);
-        setUser(null);
-        
-        // Store current path if not login page
-        if (!window.location.pathname.includes('/login')) {
-          console.log('checkAuthStatus - Storing current path for redirect:', window.location.pathname);
-          localStorage.setItem(LAST_ROUTE_KEY, window.location.pathname);
-        }
-        return;
-      }
-      
-      // Get the user data from localStorage
-      const savedUser = localStorage.getItem(`${AUTH_STORAGE_KEY}_user`);
-      if (!savedUser) {
-        console.log('checkAuthStatus - No user data found, logging out');
-        await handleLogout();
-        return;
-      }
+    const checkAuthStatus = async () => {
+      console.log('checkAuthStatus - Starting authentication check');
+      setIsLoading(true);
       
       try {
-        const userData = JSON.parse(savedUser);
-        if (userData?.email) {
-          console.log('checkAuthStatus - Setting user data from localStorage');
-          setUser(userData);
+        console.log('checkAuthStatus - Initializing Google Auth...');
+        await googleAuthService.initialize();
+        
+        // Check if user is already authenticated
+        const isSignedIn = await googleAuthService.isSignedIn();
+        console.log('checkAuthStatus - isSignedIn:', isSignedIn);
+        
+        if (isSignedIn) {
+          // Get user info
+          const token = await googleAuthService.getAccessToken();
+          const userInfo = await googleAuthService.getUserProfile(token);
+          console.log('checkAuthStatus - User info:', userInfo);
+          
+          // Update state and localStorage
           setIsAuthenticated(true);
+          setUser(userInfo);
+          localStorage.setItem(AUTH_STORAGE_KEY, 'true');
+          localStorage.setItem(USER_INFO_KEY, JSON.stringify(userInfo));
           
           // Get the current path and the last saved route
           const currentPath = window.location.pathname;
-          const lastRoute = localStorage.getItem(LAST_ROUTE_KEY);
+          const lastRoute = localStorage.getItem(LAST_ROUTE_KEY) || '/';
           
           console.log('checkAuthStatus - Current path:', currentPath);
           console.log('checkAuthStatus - Last saved route:', lastRoute);
           
-          // If we're on the root path and have a last route, navigate there
-          if (currentPath === '/' && lastRoute && lastRoute !== '/') {
-            console.log('checkAuthStatus - Redirecting to last route:', lastRoute);
-            // Use a small timeout to ensure the router is ready
-            setTimeout(() => {
-              window.history.replaceState({}, '', lastRoute);
-              window.location.reload(); // Force a reload to ensure components update
-            }, 100);
+          // Redirect to the last visited route if coming from login
+          if (currentPath === '/login') {
+            navigate(lastRoute, { replace: true });
           }
         } else {
-          console.error('checkAuthStatus - Error parsing user data');
-          await handleLogout();
+          console.log('checkAuthStatus - User is not signed in');
+          setIsAuthenticated(false);
+          setUser(null);
+          localStorage.removeItem(AUTH_STORAGE_KEY);
+          localStorage.removeItem(USER_INFO_KEY);
+          
+          // Store current path if not login page
+          if (!location.pathname.includes('/login')) {
+            console.log('checkAuthStatus - Storing current path for redirect:', location.pathname);
+            localStorage.setItem(LAST_ROUTE_KEY, location.pathname);
+          }
         }
       } catch (error) {
-        console.error('checkAuthStatus - Error parsing user data:', error);
-        await handleLogout();
+        console.error('Auth check error:', error);
+        setIsAuthenticated(false);
+        setUser(null);
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+        localStorage.removeItem(USER_INFO_KEY);
+      } finally {
+        setIsLoading(false);
       }
-      
-    } catch (error) {
-      console.error('Error in checkAuthStatus:', error);
-      setIsAuthenticated(false);
-      setUser(null);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    };
+    
+    checkAuthStatus();
+  }, [navigate, location.pathname]);
 
   const handleLogin = async () => {
     try {
-      const authInfo = await googleAuthService.signIn();
-      const authState = true;
-      setIsAuthenticated(authState);
-      setUser(authInfo.user || { name: 'User' });
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authState));
-      if (authInfo.user) {
-        localStorage.setItem(`${AUTH_STORAGE_KEY}_user`, JSON.stringify(authInfo.user));
+      await googleAuthService.signIn();
+      const isSignedIn = await googleAuthService.isSignedIn();
+      
+      if (isSignedIn) {
+        // Get user info
+        const token = await googleAuthService.getAccessToken();
+        const userInfo = await googleAuthService.getUserProfile(token);
+        
+        // Update state and localStorage
+        setIsAuthenticated(true);
+        setUser(userInfo);
+        localStorage.setItem(AUTH_STORAGE_KEY, 'true');
+        localStorage.setItem(USER_INFO_KEY, JSON.stringify(userInfo));
+        
+        // Redirect to the last visited route or home
+        const lastRoute = localStorage.getItem(LAST_ROUTE_KEY) || '/';
+        navigate(lastRoute, { replace: true });
       }
     } catch (error) {
       console.error('Login error:', error);
-      // Handle login error
+      // Reset state on error
+      setIsAuthenticated(false);
+      setUser(null);
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      localStorage.removeItem(USER_INFO_KEY);
     }
   };
 
   const handleLogout = async () => {
     try {
-      console.log('handleLogout - Starting logout process');
       await googleAuthService.signOut();
-      console.log('handleLogout - Sign out completed');
-    } catch (error) {
-      console.error('Error during logout:', error);
-    } finally {
-      // Always clear local state regardless of signOut result
-      setUser(null);
+      // Clear all auth-related data
       setIsAuthenticated(false);
-      localStorage.removeItem(`${AUTH_STORAGE_KEY}_user`);
-      console.log('handleLogout - Local state cleared');
+      setUser(null);
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      localStorage.removeItem(USER_INFO_KEY);
+      localStorage.removeItem(LAST_ROUTE_KEY);
+      // Redirect to login page
+      navigate('/login', { replace: true });
+    } catch (error) {
+      console.error('Logout error:', error);
+      // Even if there's an error, we should still clear the auth state
+      setIsAuthenticated(false);
+      setUser(null);
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      localStorage.removeItem(USER_INFO_KEY);
+      localStorage.removeItem(LAST_ROUTE_KEY);
+      navigate('/login', { replace: true });
     }
   };
 
@@ -181,32 +190,56 @@ function App() {
   }
 
   return (
-    <Router>
-      <div className="min-h-screen bg-gray-100">
-        <Routes>
-          <Route path="/login" element={
-            isAuthenticated ? (
-              <Navigate to={"/"} replace />
-            ) : (
-              <Login onLogin={handleLogin} />
-            )
-          } />
-          
-          {/* Protected Routes */}
-          <Route element={
-            <RouteGuard isAuthenticated={isAuthenticated} isLoading={isLoading} />
-          }>
-            <Route path="/" element={<Dashboard user={user} onLogout={handleLogout} />} />
-            <Route path="/sheet/:id" element={
+    <div className="min-h-screen bg-gray-50">
+      <Routes>
+        <Route path="/login" element={
+          isAuthenticated ? 
+            <Navigate to="/" replace /> : 
+            <Login onLogin={handleLogin} />
+        } />
+        
+        <Route element={
+          <RouteGuard 
+            isAuthenticated={isAuthenticated} 
+            isLoading={isLoading} 
+          />
+        }>
+          <Route 
+            path="/" 
+            element={
               <SheetEditor 
-                onLogout={handleLogout}
                 user={user}
+                onLogout={handleLogout} 
               />
-            } />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
-      </div>
+            } 
+          />
+          <Route 
+            path="/sheet/:id" 
+            element={
+              <SheetEditor 
+                user={user}
+                onLogout={handleLogout} 
+              />
+            } 
+          />
+        </Route>
+        
+        {/* 404 - Redirect to home if authenticated, otherwise to login */}
+        <Route path="*" element={
+          isAuthenticated ? 
+            <Navigate to="/" replace /> : 
+            <Navigate to="/login" replace />
+        } />
+      </Routes>
+    </div>
+  );
+}
+
+// Main App component that wraps everything with Router
+function App() {
+  return (
+    <Router>
+      <AppContent />
     </Router>
   );
 }
