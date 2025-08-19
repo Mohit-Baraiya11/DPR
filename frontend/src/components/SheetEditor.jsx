@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Send, FileSpreadsheet, LogOut, MessageSquare, User, Menu } from 'lucide-react';
+import { Send, FileSpreadsheet, LogOut, MessageSquare, User, Menu, X, Mic, MicOff } from 'lucide-react';
 import googleAuthService from '../services/googleAuth';
 import Sidebar from './Sidebar';
 import { saveChatHistory } from '../utils/chatStorage';
@@ -44,6 +44,9 @@ const SheetEditor = ({ user, onLogout }) => {
   const { id: sheetId } = useParams();
   const navigate = useNavigate();
   const [sheet, setSheet] = useState(null);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [pendingSheet, setPendingSheet] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [mode, setMode] = useState('chat');
@@ -59,7 +62,76 @@ const SheetEditor = ({ user, onLogout }) => {
   ]);
   const [activeChatId, setActiveChatId] = useState(null);
   const [inputMessage, setInputMessage] = useState('');
+  const [isSpeechSupported, setIsSpeechSupported] = useState(true);
   const messagesEndRef = useRef(null);
+
+  // Handle sheet selection with API key validation
+  const handleSheetSelect = async (selectedSheet) => {
+    console.log('Sheet selected:', selectedSheet);
+    
+    // Check if we already have a valid API key
+    const savedApiKey = localStorage.getItem('GROQ_API_KEY');
+    
+    if (!savedApiKey || savedApiKey.trim() === '') {
+      console.log('No API key found, showing modal');
+      setPendingSheet(selectedSheet);
+      setShowApiKeyModal(true);
+      return;
+    }
+    
+    console.log('API key found, proceeding with sheet selection');
+    
+    // Update the sheet and URL
+    setSheet(selectedSheet);
+    navigate(`/sheet/${selectedSheet.id}`);
+    
+    // Load chat history for this sheet
+    const chats = await getChatsBySheetId(selectedSheet.id);
+    setChatHistory(chats);
+    
+    // Set the first chat as active if available
+    if (chats.length > 0) {
+      setActiveChatId(chats[0].id);
+      setMessages(chats[0].messages);
+    } else {
+      setActiveChatId(null);
+      setMessages([{
+        id: 'welcome',
+        text: `You've selected "${selectedSheet.name}". Ask me anything about this sheet.`,
+        isUser: false,
+        timestamp: new Date().toISOString()
+      }]);
+    }
+    
+    // Reset any pending sheet
+    setPendingSheet(null);
+  };
+
+  // Save API key and continue with sheet selection
+  const handleSaveApiKey = () => {
+    if (apiKey.trim() === '') return;
+    
+    console.log('Saving API key and continuing with sheet selection');
+    
+    // Save the API key to local storage
+    localStorage.setItem('GROQ_API_KEY', apiKey);
+    setShowApiKeyModal(false);
+    setApiKey(''); // Clear the input field
+    
+    // If there was a pending sheet selection, complete it
+    if (pendingSheet) {
+      console.log('Completing pending sheet selection:', pendingSheet);
+      setSheet(pendingSheet);
+      navigate(`/sheet/${pendingSheet.id}`);
+      setMessages([{
+        id: 'welcome',
+        text: `You've selected "${pendingSheet.name}". Ask me anything about this sheet.`,
+        isUser: false,
+        timestamp: new Date().toISOString()
+      }]);
+      setPendingSheet(null);
+    }
+  };
 
   // Fetch available sheets on component mount
   useEffect(() => {
@@ -72,13 +144,19 @@ const SheetEditor = ({ user, onLogout }) => {
         if (sheetId) {
           const selectedSheet = sheets.find(s => s.id === sheetId);
           if (selectedSheet) {
-            setSheet(selectedSheet);
-            setMessages([{
-              id: 'welcome',
-              text: `You've selected "${selectedSheet.name}". Ask me anything about this sheet.`,
-              isUser: false,
-              timestamp: new Date().toISOString()
-            }]);
+            const savedApiKey = localStorage.getItem('GROQ_API_KEY');
+            if (!savedApiKey || savedApiKey.trim() === '') {
+              setPendingSheet(selectedSheet);
+              setShowApiKeyModal(true);
+            } else {
+              setSheet(selectedSheet);
+              setMessages([{
+                id: 'welcome',
+                text: `You've selected "${selectedSheet.name}". Ask me anything about this sheet.`,
+                isUser: false,
+                timestamp: new Date().toISOString()
+              }]);
+            }
           }
         }
       } catch (error) {
@@ -90,29 +168,108 @@ const SheetEditor = ({ user, onLogout }) => {
     fetchSheets();
   }, [sheetId]);
 
-  const handleSheetSelect = async (selectedSheet) => {
-    if (selectedSheet && selectedSheet.id) {
-      navigate(`/sheet/${selectedSheet.id}`);
-      setSheet(selectedSheet);
-      setMessages([{
-        id: 'welcome',
-        text: `You've selected "${selectedSheet.name}". Ask me anything about this sheet.`,
-        isUser: false,
-        timestamp: new Date().toISOString()
-      }]);
-      setActiveChatId(null);
-    } else {
-      navigate('/');
-      setSheet(null);
-      setMessages([{
-        id: 'welcome',
-        text: 'Please select a sheet from the sidebar to get started.',
-        isUser: false,
-        timestamp: new Date().toISOString()
-      }]);
-      setActiveChatId(null);
+  // Audio recording state
+  const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [audioChunks, setAudioChunks] = useState([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const streamRef = useRef(null);
+
+  // Initialize media recorder
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  // Handle audio data
+  useEffect(() => {
+    if (audioChunks.length > 0 && !isRecording) {
+      processAudio(audioChunks);
+      setAudioChunks([]);
+    }
+  }, [audioChunks, isRecording]);
+
+  // Process recorded audio with Groq STT
+  const processAudio = async (chunks) => {
+    try {
+      const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+      const groqApiKey = localStorage.getItem('GROQ_API_KEY');
+      
+      if (!groqApiKey) {
+        alert('Please set your GROQ API key first');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'recording.webm');
+      formData.append('model', 'whisper-large-v3-turbo');
+      formData.append('language', 'en');
+
+      const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqApiKey}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || 'Failed to transcribe audio');
+      }
+
+      const result = await response.json();
+      setInputMessage(prev => prev + ' ' + result.text);
+    } catch (error) {
+      console.error('Error processing audio:', error);
+      alert(`Error: ${error.message}`);
     }
   };
+
+  // Start/stop recording
+  const toggleRecording = async () => {
+    if (isRecording) {
+      // Stop recording
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      setIsRecording(false);
+    } else {
+      try {
+        // Request microphone access
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream;
+        
+        const recorder = new MediaRecorder(stream);
+        const chunks = [];
+        
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            chunks.push(e.data);
+          }
+        };
+        
+        recorder.onstop = () => {
+          setAudioChunks([...chunks]);
+        };
+        
+        recorder.start(1000); // Collect data every second
+        setMediaRecorder(recorder);
+        setIsRecording(true);
+        
+      } catch (error) {
+        console.error('Error accessing microphone:', error);
+        alert('Could not access microphone. Please ensure you have granted microphone permissions.');
+      }
+    }
+  };
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const handleSelectChat = (chat) => {
     setActiveChatId(chat.id);
@@ -170,11 +327,15 @@ const SheetEditor = ({ user, onLogout }) => {
       // Determine the API endpoint and request body based on the current mode
       let apiUrl, requestBody;
       
+      // Get GROQ API key from local storage
+      const groqApiKey = localStorage.getItem('GROQ_API_KEY') || '';
+      
       if (mode === 'chat') {
         apiUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/query-logs`;
         requestBody = {
           spreadsheet_id: sheetId,
           query: inputMessage,
+          groq_api_key: groqApiKey,
           max_logs: 100
         };
       } else {
@@ -183,7 +344,8 @@ const SheetEditor = ({ user, onLogout }) => {
           spreadsheet_id: sheetId,
           sheet_name: sheet?.name || '',
           user_query: inputMessage,
-          site_engineer_name: user?.name || 'Unknown User'
+          site_engineer_name: user?.name || 'Unknown User',
+          groq_api_key: groqApiKey
         };
       }
 
@@ -243,8 +405,64 @@ const SheetEditor = ({ user, onLogout }) => {
     }
   };
 
+  // API Key Modal
+  const ApiKeyModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-medium text-gray-900">GROQ API Key Required</h3>
+          <button
+            onClick={() => setShowApiKeyModal(false)}
+            className="text-gray-400 hover:text-gray-500"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <p className="text-sm text-gray-500 mb-4">
+          Please enter your GROQ API key to continue. This will be stored in your browser's local storage.
+        </p>
+        <div className="mb-4">
+          <a
+            href="https://console.groq.com/keys"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center"
+          >
+            <span>Get your API key from Groq Console</span>
+            <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+          </a>
+        </div>
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="Enter your GROQ API key"
+          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        />
+        <div className="mt-4 flex justify-end space-x-3">
+          <button
+            onClick={() => setShowApiKeyModal(false)}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSaveApiKey}
+            disabled={!apiKey.trim()}
+            className={`px-4 py-2 text-sm font-medium text-white rounded-md ${apiKey.trim() ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-400 cursor-not-allowed'}`}
+          >
+            Save & Continue
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex h-screen bg-gray-50">
+      {showApiKeyModal && <ApiKeyModal />}
       {/* Sidebar */}
       <div className={`${isSidebarOpen ? 'w-80' : 'w-0'} transition-all duration-300 ease-in-out overflow-hidden bg-white border-r border-gray-200`}>
         {isSidebarOpen && (
@@ -367,15 +585,24 @@ const SheetEditor = ({ user, onLogout }) => {
                   type="text"
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
-                  placeholder={`Ask something about ${sheet?.name || 'this sheet'}...`}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                  placeholder={isRecording ? 'Recording...' : 'Type your message...'}
+                  className="flex-1 p-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <button
-                  type="submit"
-                  disabled={!inputMessage.trim()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  type="button"
+                  onClick={toggleRecording}
+                  className={`p-2 border-t border-b ${isRecording ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'} border-gray-300 focus:outline-none`}
+                  title={isRecording ? 'Stop recording' : 'Start voice input'}
                 >
-                  <Send size={20} />
+                  {isRecording ? <MicOff className="h-5 w-5 animate-pulse" /> : <Mic className="h-5 w-5" />}
+                </button>
+                <button
+                  onClick={handleSendMessage}
+                  className="bg-blue-500 text-white p-2 rounded-r-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                  disabled={!inputMessage.trim()}
+                >
+                  <Send className="h-5 w-5" />
                 </button>
               </form>
             </div>

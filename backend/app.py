@@ -65,10 +65,12 @@ class UpdateSheetRequest(BaseModel):
     sheet_name: str = "Sheet1"
     user_query: str
     site_engineer_name: str = "Unknown"
+    groq_api_key: str
 
 class LogsQueryRequest(BaseModel):
     spreadsheet_id: str
     query: str
+    groq_api_key: str
     max_logs: int = 100  # Default to last 100 logs
 
 # -----------------------------
@@ -382,7 +384,7 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
         """
         
         # Process the query
-        row_indices, columns_indices, updations, quantities, feedbacks = process_user_query(ACTION_PROMPT)
+        row_indices, columns_indices, updations, quantities, feedbacks = process_user_query(ACTION_PROMPT, request.groq_api_key)
         
         # Debug print
         print("\nProcessing results:")
@@ -709,7 +711,7 @@ async def query_logs(request: LogsQueryRequest, service=Depends(get_sheets_servi
             logs.append(log_entry)
         
         # Process the query using the log agent
-        result = process_logs_query(logs, request.query, site_engineer_name)
+        result = process_logs_query(logs, request.query, site_engineer_name, request.groq_api_key)
         
         return {
             "status": "success",

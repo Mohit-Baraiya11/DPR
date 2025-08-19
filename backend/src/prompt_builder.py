@@ -21,26 +21,29 @@ class SupportResult(BaseModel):
 class LogQueryResult(BaseModel):
     result: str
 
-support_agent = Agent(
-    model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct", api_key=os.getenv("GROQ_API_KEY")),
-    system_message=SYSTEM_PROMPT,
-    markdown=False,
-    response_model=SupportResult,
-    retries=10,
-    add_datetime_to_instructions=True,
-)
+def get_support_agent(api_key: str) -> Agent:
+    return Agent(
+        model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct", api_key=api_key),
+        system_message=SYSTEM_PROMPT,
+        markdown=False,
+        response_model=SupportResult,
+        retries=10,
+        add_datetime_to_instructions=True,
+    )
 
-log_agent = Agent(
-    model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct", api_key=os.getenv("GROQ_API_KEY")),
-    system_message=LOGS_SYSTEM_PROMPT,
-    markdown=True,
-    response_model=LogQueryResult,
-    retries=5,
-    add_datetime_to_instructions=True,
-)
+def get_log_agent(api_key: str) -> Agent:
+    return Agent(
+        model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct", api_key=api_key),
+        system_message=LOGS_SYSTEM_PROMPT,
+        markdown=True,
+        response_model=LogQueryResult,
+        retries=5,
+        add_datetime_to_instructions=True,
+    )
 
-def process_user_query(user_query):
-    output =  support_agent.run(user_query)
+def process_user_query(user_query: str, groq_api_key: str):
+    agent = get_support_agent(groq_api_key)
+    output = agent.run(user_query)
     return ( 
         output.content.row_index,
         output.content.columns_index,
@@ -50,7 +53,7 @@ def process_user_query(user_query):
     )
 
 
-def process_logs_query(logs_data: list[dict], user_query: str, site_engineer_name: str) -> str:
+def process_logs_query(logs_data: list[dict], user_query: str, site_engineer_name: str, groq_api_key: str) -> str:
     """
     Process a query about the logs data.
     
@@ -90,7 +93,8 @@ The user asking the question is: {site_engineer_name}
 Please provide a clear and concise response based on the log data above."""
         
         # Get the response from the agent
-        response = log_agent.run(prompt)
+        agent = get_log_agent(groq_api_key)
+        response = agent.run(prompt)
         return response.content.result
         
     except Exception as e:
