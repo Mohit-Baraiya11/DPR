@@ -329,20 +329,45 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
             breakpoint_index = len(header_row)
         headers_before_break = header_row[:breakpoint_index]
 
+        # Get the indices of Location and Peta Location columns
+        location_idx = None
+        peta_location_idx = None
+        for idx, header in enumerate(headers_before_break):
+            if header.strip().lower() == 'location':
+                location_idx = idx
+            elif header.strip().lower() == 'peta location':
+                peta_location_idx = idx
+        
+        if location_idx is None or peta_location_idx is None:
+            return {"status": "error", "message": "Required columns 'Location' and 'Peta Location' not found in sheet"}
+
         row_index_data = {}
         empty_row_count = 0
         max_consecutive_empty = 4
+        
         for idx, row in enumerate(values[2:], start=3):
-            is_empty = all((cell.strip() == "" if isinstance(cell, str) else True) for cell in row[:breakpoint_index])
-            if is_empty:
+            # Check if row has enough columns for our indices
+            if len(row) <= max(location_idx, peta_location_idx):
+                empty_row_count += 1
+                if empty_row_count >= max_consecutive_empty:
+                    break
+                continue
+                
+            # Get location and peta location values
+            location = row[location_idx].strip() if location_idx < len(row) else ""
+            peta_location = row[peta_location_idx].strip() if peta_location_idx < len(row) else ""
+            
+            # Skip if both are empty
+            if not location and not peta_location:
                 empty_row_count += 1
                 if empty_row_count >= max_consecutive_empty:
                     break
                 continue
             else:
                 empty_row_count = 0
-            row_data = row[:breakpoint_index] + [""] * (len(headers_before_break) - len(row))
-            row_index_data[idx] = dict(zip(headers_before_break, row_data))
+                
+            # Store as tuple (Location, Peta Location)
+            row_index_data[str(idx)] = (location, peta_location)
 
         column_index_data = {}
         col_letters = list(string.ascii_uppercase)
@@ -364,7 +389,8 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
         
         if sheet_info.get("status") != "success":
             return {"status": "error", "message": "Failed to fetch sheet data"}
-         
+        
+        print("sheet data", sheet_info) 
         
         ACTION_PROMPT = f"""
         You are given
@@ -374,20 +400,46 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
         USER QUERY:
         {request.user_query}
 
-        Now, process the user query according to the SYSTEM_PROMPT rules:
-        - Identify exact row matches first.
-        - Then identify columns only if row matches exist.
-        - Detect updations ("COM" or "WIP") and quantities.
-        - Build the output as a SupportResult JSON with the required fields.
-        - Do not add any extra keys or change the order of keys in the output.
-        - Ensure that all matching and parsing follows the SYSTEM_PROMPT exactly.
+        Now, process the user query according to these strict rules:
+        
+        1. ROW MATCHING:
+           - First, find exact matches for Location and Peta Location in ROW_INDEX
+           - If no exact match is found, return empty lists and add "No exact match found in the given sheet." to feedbacks
+        
+        2. COLUMN MATCHING (only if row match exists):
+           - Compare the work term from the user query to COLUMN_INDEX values (case-insensitive, trim spaces)
+           - If a match is found, store the column's key (e.g., "F") in columns_index
+           - If multiple column values contain the user term (ambiguous), return:
+               - Empty lists for row_index, columns_index, updations, quantities
+               - A feedback message: "Multiple matches found for '[TERM]'. Please specify which one you mean: [MATCHING_COLUMNS]."
+        
+        3. UPDATIONS:
+           - Only "completed" → "COM" or "work in progress" → "WIP" are valid
+           - If no valid update is mentioned, leave empty and add a feedback message
+        
+        4. QUANTITIES:
+           - Extract numbers after "by" (e.g., "by 20 cubic meter" → 20)
+           - If no quantity is mentioned, use 0
+        
+        5. FEEDBACKS:
+           - For successful matches: "Location [Location], Peta Location [Peta Location] has been updated to [updation] for [column name]"
+           - For no row match: "No exact match found in the given sheet."
+           - For ambiguous column: "Multiple matches found for '[TERM]'. Please specify which one you mean: [MATCHING_COLUMNS]."
+        
+        Important:
+        - Do NOT attempt fuzzy matching for Location or Peta Location
+        - Do NOT try to correct spelling or infer missing values
+        - Do NOT output any extra keys or change the order of keys in the response
+        - If there's any ambiguity or missing information, provide clear feedback in the feedbacks list
+        
+        Now process the query and return the response in the exact format expected by the SupportResult model.
         """
         
-        # Process the query
+        # Process the query through LLM
         row_indices, columns_indices, updations, quantities, feedbacks = process_user_query(ACTION_PROMPT, request.groq_api_key)
         
-        # Debug print
-        print("\nProcessing results:")
+        # Debug print the LLM processing results
+        print("\nLLM Processing results:")
         print(f"Row Indices: {row_indices}")
         print(f"Column Indices: {columns_indices}")
         print(f"Updates: {updations}")
@@ -464,8 +516,8 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
                 'updateCells': {
                     'range': {
                         'sheetId': main_sheet_id,
-                        'startRowIndex': row_num,
-                        'endRowIndex': row_num + 1,
+                        'startRowIndex': row_num-1,
+                        'endRowIndex': row_num,
                         'startColumnIndex': col_num,
                         'endColumnIndex': col_num + 1
                     },

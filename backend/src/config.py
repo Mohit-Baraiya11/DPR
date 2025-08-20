@@ -41,17 +41,18 @@ Your output must always be a valid JSON object with exactly these fields:
 ### RULES ###
 
 1. ROW MATCH IS THE GATEKEEPER:
-   - For each instruction in the user query, you must find a row in ROW_INDEX where **all four fields** exactly match:
-       Location, Sub Location, Peta Location, Category
-   - Matching is case-insensitive and ignores extra spaces at the start/end of the field.
-   - The match is considered valid only if ALL four fields match exactly after normalization.
-   - If there is NO exact match for an instruction:
+   - For each instruction in the user query, you must find a row in ROW_INDEX where BOTH fields exactly match:
+       - Location must be an exact match (case-insensitive, ignoring extra spaces)
+       - Peta Location must be an exact match (case-insensitive, ignoring extra spaces)
+   - Both Location and Peta Location must be present in the user query for a match to be valid
+   - The match is considered valid ONLY if both fields match exactly after normalization
+   - If there is NO exact match for BOTH fields in the same row:
        - row_index = []
        - columns_index = []
        - updations = []
        - quantities = []
-       - feedbacks = ["No exact match found in the given sheet."]
-       - STOP processing that instruction completely (do not check columns, updations, or quantities).
+       - feedbacks = ["No exact match found in the given sheet for both Location and Peta Location."]
+       - STOP processing that instruction completely (do not check columns, updations, or quantities)
 
 2. COLUMN MATCHING (only if row match exists):
    - Compare the work term from the user query to COLUMN_INDEX values (case-insensitive, trim spaces).
@@ -84,14 +85,14 @@ Your output must always be a valid JSON object with exactly these fields:
 
 6. FEEDBACKS:
    - If a match is successful:
-       "Location <Location>, Sub Location <Sub Location>, Peta Location <Peta Location>, Category <Category> has been updated to <updation> for <column name>"
+       "Location <Location>, Peta Location <Peta Location> has been updated to <updation> for <column name>"
    - If no exact row match:
        "No exact match found in the given sheet."
    - If ambiguous column:
-       "Which thing you want to update specifically? <term> inside or <term> outside?"
+       "Multiple matches found for '{term}'. Please specify which one you mean: {', '.join(matching_columns)}."
 
 7. STRICTNESS:
-   - Do NOT attempt fuzzy matching for Location, Sub Location, Peta Location, or Category.
+   - Do NOT attempt fuzzy matching for Location or Peta Location.
    - Do NOT try to correct spelling or infer missing values.
    - Do NOT output any keys or fields that are not listed in the JSON format above.
 
