@@ -400,31 +400,36 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
         USER QUERY:
         {request.user_query}
 
-        Now, process the user query according to these strict rules:
-        
-        1. ROW MATCHING:
-           - First, find exact matches for Location and Peta Location in ROW_INDEX
-           - If no exact match is found, return empty lists and add "No exact match found in the given sheet." to feedbacks
-        
-        2. COLUMN MATCHING (only if row match exists):
-           - Compare the work term from the user query to COLUMN_INDEX values (case-insensitive, trim spaces)
-           - If a match is found, store the column's key (e.g., "F") in columns_index
-           - If multiple column values contain the user term (ambiguous), return:
-               - Empty lists for row_index, columns_index, updations, quantities
-               - A feedback message: "Multiple matches found for '[TERM]'. Please specify which one you mean: [MATCHING_COLUMNS]."
-        
-        3. UPDATIONS:
-           - Only "completed" → "COM" or "work in progress" → "WIP" are valid
-           - If no valid update is mentioned, leave empty and add a feedback message
-        
-        4. QUANTITIES:
-           - Extract numbers after "by" (e.g., "by 20 cubic meter" → 20)
-           - If no quantity is mentioned, use 0
-        
-        5. FEEDBACKS:
-           - For successful matches: "Location [Location], Peta Location [Peta Location] has been updated to [updation] for [column name]"
-           - For no row match: "No exact match found in the given sheet."
-           - For ambiguous column: "Multiple matches found for '[TERM]'. Please specify which one you mean: [MATCHING_COLUMNS]."
+        PROCESSING STEPS:
+
+        1. PARSE QUERY:
+        - Identify Location, Peta Location(s), work type, status, quantity
+        - Handle ranges (e.g., "101 to 105" becomes ["101", "102", "103", "104", "105"])
+
+        2. FIND ROWS:
+        - For each Peta Location, look for exact match in ROW_INDEX
+        - Keep track of found and missing Peta Locations
+
+        3. MATCH COLUMN:
+        - Compare work type against COLUMN_INDEX values using flexible matching
+        - Handle common typos and variations
+        - Pick best match or provide helpful feedback if none found
+
+        4. GENERATE RESULTS:
+        - Create lists for each successful match
+        - Include appropriate feedback for each case
+        - Ensure lists are same length and correspond to each other
+
+        5. VALIDATION:
+        - Verify output format is correct
+        - Ensure feedback is always provided, even for failures
+        - Double-check that no empty results are returned without explanation
+
+        Remember: 
+        - NEVER return completely empty lists without feedback
+        - Handle typos and variations in work types gracefully  
+        - Provide specific, actionable feedback messages
+        - Process partial matches when possible
         
         Important:
         - Do NOT attempt fuzzy matching for Location or Peta Location
