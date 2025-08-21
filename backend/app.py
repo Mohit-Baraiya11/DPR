@@ -741,7 +741,7 @@ async def query_logs(request: LogsQueryRequest, service=Depends(get_sheets_servi
         result = service.spreadsheets().values().get(
             spreadsheetId=request.spreadsheet_id,
             range="'LOG'!A2:L" + str(request.max_logs + 1),  # +1 because of 1-based indexing
-            valueRenderOption='UNFORMATTED_VALUE'
+            valueRenderOption='FORMATTED_VALUE'  # Changed to get formatted dates instead of serial numbers
         ).execute()
         
         # If no logs found, return empty response
