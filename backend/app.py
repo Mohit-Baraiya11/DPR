@@ -71,7 +71,7 @@ class LogsQueryRequest(BaseModel):
     spreadsheet_id: str
     query: str
     groq_api_key: str
-    max_logs: int = 100  # Default to last 100 logs
+    max_logs: int = 500  # Default to last 500 logs
 
 # -----------------------------
 # Helper function to get Sheets service
@@ -725,7 +725,7 @@ async def query_logs(request: LogsQueryRequest, service=Depends(get_sheets_servi
         request: Contains:
             - spreadsheet_id: ID of the spreadsheet
             - query: The user's query about the logs
-            - max_logs: Maximum number of logs to retrieve (default: 100)
+            - max_logs: Maximum number of logs to retrieve (default: 500)
             
     Returns:
         A response containing the answer to the user's query
