@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FileSpreadsheet, RefreshCw, MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
+import { FileSpreadsheet, RefreshCw, MessageSquare, ChevronDown, ChevronRight, LogOut, User } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { getChatsBySheetId } from '../utils/chatStorage';
 
@@ -11,7 +11,9 @@ const Sidebar = ({
   onSelectChat,
   activeChatId,
   isOpen = true,
-  onToggle
+  onToggle,
+  user,
+  onLogout
 }) => {
   const [view, setView] = useState('sheets'); // 'sheets' or 'chats'
   const [chatHistory, setChatHistory] = useState([]);
@@ -247,6 +249,36 @@ const Sidebar = ({
       <div className="flex-1 overflow-hidden">
         {view === 'sheets' ? renderSheetsList() : renderChatHistory()}
       </div>
+      
+      {/* User Profile Section */}
+      {user && (
+        <div className="border-t border-gray-200 p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2 min-w-0">
+              <div className="flex-shrink-0 w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center text-gray-600 font-medium">
+                {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-gray-900 truncate">
+                  {user.name}
+                </p>
+                {user.email && (
+                  <p className="text-xs text-gray-500 truncate">
+                    {user.email}
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={onLogout}
+              className="flex-shrink-0 p-1.5 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              title="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
