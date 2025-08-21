@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Send, FileSpreadsheet, LogOut, MessageSquare, User, Menu, X, Mic, MicOff } from 'lucide-react';
+import { Send, FileSpreadsheet, LogOut, MessageSquare, User, Menu, X, Mic, MicOff, ExternalLink } from 'lucide-react';
 import googleAuthService from '../services/googleAuth';
 import Sidebar from './Sidebar';
-import { saveChatHistory } from '../utils/chatStorage';
+import { saveChatHistory, getTodaysChat } from '../utils/chatStorage';
 
 // Chat message component
 const ChatMessage = ({ message, isUser, isLoading, isError }) => {
@@ -85,15 +85,15 @@ const SheetEditor = ({ user, onLogout }) => {
     setSheet(selectedSheet);
     navigate(`/sheet/${selectedSheet.id}`);
     
-    // Load chat history for this sheet
-    const chats = await getChatsBySheetId(selectedSheet.id);
-    setChatHistory(chats);
+    // Load today's chat history for this sheet
+    const todaysChat = await getTodaysChat(selectedSheet.id);
     
-    // Set the first chat as active if available
-    if (chats.length > 0) {
-      setActiveChatId(chats[0].id);
-      setMessages(chats[0].messages);
+    if (todaysChat && todaysChat.messages && todaysChat.messages.length > 0) {
+      // Load existing chat messages for today
+      setMessages(todaysChat.messages);
+      setActiveChatId(todaysChat.id);
     } else {
+      // Start fresh with welcome message
       setActiveChatId(null);
       setMessages([{
         id: 'welcome',
@@ -108,7 +108,7 @@ const SheetEditor = ({ user, onLogout }) => {
   };
 
   // Save API key and continue with sheet selection
-  const handleSaveApiKey = () => {
+  const handleSaveApiKey = async () => {
     if (apiKey.trim() === '') return;
     
     console.log('Saving API key and continuing with sheet selection');
@@ -123,12 +123,19 @@ const SheetEditor = ({ user, onLogout }) => {
       console.log('Completing pending sheet selection:', pendingSheet);
       setSheet(pendingSheet);
       navigate(`/sheet/${pendingSheet.id}`);
-      setMessages([{
-        id: 'welcome',
-        text: `You've selected "${pendingSheet.name}". Ask me anything about this sheet.`,
-        isUser: false,
-        timestamp: new Date().toISOString()
-      }]);
+      // Load today's chat history
+      const todaysChat = await getTodaysChat(pendingSheet.id);
+      if (todaysChat && todaysChat.messages && todaysChat.messages.length > 0) {
+        setMessages(todaysChat.messages);
+        setActiveChatId(todaysChat.id);
+      } else {
+        setMessages([{
+          id: 'welcome',
+          text: `You've selected "${pendingSheet.name}". Ask me anything about this sheet.`,
+          isUser: false,
+          timestamp: new Date().toISOString()
+        }]);
+      }
       setPendingSheet(null);
     }
   };
@@ -150,12 +157,19 @@ const SheetEditor = ({ user, onLogout }) => {
               setShowApiKeyModal(true);
             } else {
               setSheet(selectedSheet);
-              setMessages([{
-                id: 'welcome',
-                text: `You've selected "${selectedSheet.name}". Ask me anything about this sheet.`,
-                isUser: false,
-                timestamp: new Date().toISOString()
-              }]);
+              // Load today's chat history
+              const todaysChat = await getTodaysChat(selectedSheet.id);
+              if (todaysChat && todaysChat.messages && todaysChat.messages.length > 0) {
+                setMessages(todaysChat.messages);
+                setActiveChatId(todaysChat.id);
+              } else {
+                setMessages([{
+                  id: 'welcome',
+                  text: `You've selected "${selectedSheet.name}". Ask me anything about this sheet.`,
+                  isUser: false,
+                  timestamp: new Date().toISOString()
+                }]);
+              }
             }
           }
         }
@@ -235,6 +249,13 @@ const SheetEditor = ({ user, onLogout }) => {
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
       }
+      // Stop all tracks to release microphone
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => {
+          track.stop();
+        });
+        streamRef.current = null;
+      }
       setIsRecording(false);
     } else {
       try {
@@ -253,6 +274,13 @@ const SheetEditor = ({ user, onLogout }) => {
         
         recorder.onstop = () => {
           setAudioChunks([...chunks]);
+          // Stop all tracks when recording stops
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => {
+              track.stop();
+            });
+            streamRef.current = null;
+          }
         };
         
         recorder.start(1000); // Collect data every second
@@ -381,8 +409,8 @@ const SheetEditor = ({ user, onLogout }) => {
       const finalMessages = [...updatedMessages, responseMessage];
       setMessages(finalMessages);
 
-      // Save chat to history
-      if (sheet && data.status === 'success') {
+      // Save chat to history (save regardless of success/failure to preserve conversation)
+      if (sheet) {
         await saveChatHistory(sheet.id, sheet.name, finalMessages);
       }
     } catch (error) {
@@ -493,9 +521,9 @@ const SheetEditor = ({ user, onLogout }) => {
           </h1>
         </div>
         
-        {/* Mode Selector */}
+        {/* Mode Selector and Sheet Button */}
         {sheetId && (
-          <div className="ml-4">
+          <div className="flex items-center space-x-3 ml-4">
             <select
               value={mode}
               onChange={(e) => setMode(e.target.value)}
@@ -504,6 +532,20 @@ const SheetEditor = ({ user, onLogout }) => {
               <option value="chat">Chat Mode</option>
               <option value="update">Update Mode</option>
             </select>
+            
+            {/* Open in Google Sheets Button */}
+            <button
+              onClick={() => {
+                if (sheet && sheet.id) {
+                  window.open(`https://docs.google.com/spreadsheets/d/${sheet.id}`, '_blank');
+                }
+              }}
+              className="inline-flex items-center whitespace-nowrap px-3 py-1 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200"
+              title="Open sheet in Google Sheets"
+            >
+              <ExternalLink className="h-4 w-4 mr-1" />
+              <span>Open Sheet</span>
+            </button>
           </div>
         )}
         
@@ -578,32 +620,41 @@ const SheetEditor = ({ user, onLogout }) => {
 
         {/* Input Area - Only show when a sheet is selected */}
         {sheetId && (
-          <div className="border-t border-gray-200 bg-white p-4">
+          <div className="border-t border-gray-200 bg-gray-50 p-4">
             <div className="max-w-3xl mx-auto">
-              <form onSubmit={handleSendMessage} className="flex space-x-2">
-                <input
-                  type="text"
-                  value={inputMessage}
-                  onChange={(e) => setInputMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder={isRecording ? 'Recording...' : 'Type your message...'}
-                  className="flex-1 p-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button
-                  type="button"
-                  onClick={toggleRecording}
-                  className={`p-2 border-t border-b ${isRecording ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'} border-gray-300 focus:outline-none`}
-                  title={isRecording ? 'Stop recording' : 'Start voice input'}
-                >
-                  {isRecording ? <MicOff className="h-5 w-5 animate-pulse" /> : <Mic className="h-5 w-5" />}
-                </button>
-                <button
-                  onClick={handleSendMessage}
-                  className="bg-blue-500 text-white p-2 rounded-r-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                  disabled={!inputMessage.trim()}
-                >
-                  <Send className="h-5 w-5" />
-                </button>
+              <form onSubmit={handleSendMessage} className="relative">
+                <div className="relative flex items-center bg-white rounded-full shadow-sm border border-gray-200 focus-within:border-gray-300 focus-within:ring-2 focus-within:ring-gray-200 transition-all duration-200">
+                  <input
+                    type="text"
+                    value={inputMessage}
+                    onChange={(e) => setInputMessage(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage(e);
+                      }
+                    }}
+                    placeholder={isRecording ? 'Recording...' : mode === 'chat' ? 'Get details...' : 'Update the sheet...'}
+                    className="flex-1 px-5 py-3 bg-transparent border-0 outline-none text-gray-700 placeholder-gray-400"
+                  />
+                  <div className="flex items-center space-x-1 pr-2">
+                    <button
+                      type="button"
+                      onClick={toggleRecording}
+                      className={`p-2 rounded-full transition-colors duration-200 ${isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
+                      title={isRecording ? 'Stop recording' : 'Start voice input'}
+                    >
+                      {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    </button>
+                    <button
+                      type="submit"
+                      className="p-2 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={!inputMessage.trim()}
+                    >
+                      <Send className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
               </form>
             </div>
           </div>

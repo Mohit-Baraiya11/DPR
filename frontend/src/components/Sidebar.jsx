@@ -192,31 +192,34 @@ const Sidebar = ({
 
   return (
     <div className="h-full flex flex-col bg-white border-r border-gray-200">
-      <div className="flex border-b border-gray-200">
-        <button
-          onClick={() => setView('sheets')}
-          className={`flex-1 py-2 px-4 text-sm font-medium text-center ${
-            view === 'sheets' 
-              ? 'border-b-2 border-blue-500 text-blue-600' 
-              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-          }`}
-        >
-          Sheets
-        </button>
-        <button
-          onClick={() => setView('chats')}
-          className={`flex-1 py-2 px-4 text-sm font-medium text-center ${
-            view === 'chats' 
-              ? 'border-b-2 border-blue-500 text-blue-600' 
-              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-          }`}
-          disabled={!currentSheetId}
-        >
-          Chat History
-        </button>
+      {/* Header with same height as main navbar */}
+      <div className="h-[60px] border-b border-gray-200 flex flex-col">
+        <div className="flex flex-1">
+          <button
+            onClick={() => setView('sheets')}
+            className={`flex-1 py-2 px-4 text-sm font-medium text-center flex items-center justify-center ${
+              view === 'sheets' 
+                ? 'border-b-2 border-blue-500 text-blue-600' 
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            Sheets
+          </button>
+          <button
+            onClick={() => setView('chats')}
+            className={`flex-1 py-2 px-4 text-sm font-medium text-center flex items-center justify-center ${
+              view === 'chats' 
+                ? 'border-b-2 border-blue-500 text-blue-600' 
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+            disabled={!currentSheetId}
+          >
+            Chat History
+          </button>
+        </div>
       </div>
 
-      <div className="p-2 border-b border-gray-200 flex justify-between items-center">
+      <div className="p-3 border-b border-gray-200 flex justify-between items-center">
         <h2 className="text-sm font-medium text-gray-900">
           {view === 'sheets' ? 'Your Sheets' : 'Chat History'}
         </h2>
