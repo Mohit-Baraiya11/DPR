@@ -1,0 +1,32 @@
+# app.yaml
+runtime: python39  # or python38, python310 depending on your Python version
+service: smart-dpr
+entrypoint: gunicorn -w 4 -k uvicorn.workers.UvicornWorker app:app
+
+instance_class: F4
+
+env_variables:
+  # These environment variables should be set in Cloud Run
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+  GOOGLE_TOKEN_URI: ${GOOGLE_TOKEN_URI}
+  # Add other environment variables from your .env file
+
+# This configuration is for App Engine. For Cloud Run, we'll use a different approach.
+# We'll create a separate cloudbuild.yaml for Cloud Run deployment.
+
+# Health check configuration
+health_check:
+  enable_health_check: True
+  check_interval_sec: 10
+  timeout_sec: 4
+  unhealthy_threshold: 2
+  healthy_threshold: 2
+
+# Auto scaling
+automatic_scaling:
+  min_instances: 1
+  max_instances: 5
+  cool_down_period_sec: 180
+  cpu_utilization:
+    target_utilization: 0.6
