@@ -381,3 +381,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Security - Additional patterns for secrets
+*secret*
+*key*
+*token*
+*.pem
+*.p12
+*.pfx
+*credentials*
+*config.json
+!*example*
+!*template*
+!*sample*
