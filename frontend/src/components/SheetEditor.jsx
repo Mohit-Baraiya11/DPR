@@ -4,6 +4,7 @@ import { Send, FileSpreadsheet, LogOut, MessageSquare, User, Menu, X, Mic, MicOf
 import googleAuthService from '../services/googleAuth';
 import Sidebar from './Sidebar';
 import { saveChatHistory, getTodaysChat } from '../utils/chatStorage';
+import { API_BASE_URL } from '../config';
 
 // Chat message component
 const ChatMessage = ({ message, isUser, isLoading, isError }) => {
@@ -377,7 +378,7 @@ const SheetEditor = ({ user, onLogout }) => {
       const groqApiKey = localStorage.getItem('GROQ_API_KEY') || '';
       
       if (mode === 'chat') {
-        apiUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/query-logs`;
+        apiUrl = `${API_BASE_URL}/api/query-logs`;
         requestBody = {
           spreadsheet_id: sheetId,
           query: inputMessage,
@@ -385,7 +386,7 @@ const SheetEditor = ({ user, onLogout }) => {
           max_logs: 100
         };
       } else {
-        apiUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/update-sheet`;
+        apiUrl = `${API_BASE_URL}/api/update-sheet`;
         requestBody = {
           spreadsheet_id: sheetId,
           sheet_name: sheet?.name || '',
