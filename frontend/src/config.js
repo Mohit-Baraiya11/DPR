@@ -1,4 +1,5 @@
-export const API_BASE_URL = 'https://smart-dpr-52156575228.asia-south1.run.app';
+export const API_BASE_URL = 'http://localhost:8000';
+// export const API_BASE_URL = 'https://smart-dpr-52156575228.asia-south1.run.app';
 
 export const GOOGLE_CONFIG = {
   CLIENT_ID: import.meta.env.VITE_GOOGLE_CLIENT_ID || '753600118822-10ju79ml8obmm030e12dvgb8to2qaej9.apps.googleusercontent.com',

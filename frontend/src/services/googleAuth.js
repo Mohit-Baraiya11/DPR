@@ -280,7 +280,8 @@ class GoogleAuthService {
         
         return {
           name: userInfo.name || 'User',
-          email: userInfo.email
+          email: userInfo.email,
+          picture: userInfo.picture || null
         };
       } else {
         console.warn(`getUserProfile - Userinfo endpoint returned ${userInfoResponse.status}:`, await userInfoResponse.text().catch(() => 'Could not read error response'));
@@ -307,7 +308,8 @@ class GoogleAuthService {
       
       return {
         name: tokenInfo.name || 'User',
-        email: tokenInfo.email
+        email: tokenInfo.email,
+        picture: tokenInfo.picture || null
       };
       
     } catch (error) {
