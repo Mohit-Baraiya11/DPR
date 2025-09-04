@@ -27,10 +27,9 @@ app = FastAPI(title="SMART DPR Backend")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
+        os.getenv("FRONTEND_URL","http://localhost:3000",),
+        "http://localhost:5173"
         "http://localhost:8080",
-        "http://localhost:8000",
         "https://smart-dpr-469205.uc.r.appspot.com"  # Production URL
     ],
     allow_credentials=True,
@@ -65,12 +64,10 @@ class UpdateSheetRequest(BaseModel):
     sheet_name: str = "Sheet1"
     user_query: str
     site_engineer_name: str = "Unknown"
-    groq_api_key: str
 
 class LogsQueryRequest(BaseModel):
     spreadsheet_id: str
     query: str
-    groq_api_key: str
     max_logs: int = 500  # Default to last 500 logs
 
 # -----------------------------
@@ -441,7 +438,11 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
         """
         
         # Process the query through LLM
-        row_indices, columns_indices, updations, quantities, feedbacks = process_user_query(ACTION_PROMPT, request.groq_api_key)
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if not groq_api_key:
+            return {"status": "error", "message": "GROQ API key not configured on server"}
+        
+        row_indices, columns_indices, updations, quantities, feedbacks = process_user_query(ACTION_PROMPT, groq_api_key)
         
         # Debug print the LLM processing results
         print("\nLLM Processing results:")
@@ -768,7 +769,11 @@ async def query_logs(request: LogsQueryRequest, service=Depends(get_sheets_servi
             logs.append(log_entry)
         
         # Process the query using the log agent
-        result = process_logs_query(logs, request.query, site_engineer_name, request.groq_api_key)
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if not groq_api_key:
+            return {"status": "error", "message": "GROQ API key not configured on server"}
+        
+        result = process_logs_query(logs, request.query, site_engineer_name, groq_api_key)
         
         return {
             "status": "success",
