@@ -3,11 +3,13 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavig
 import Login from './components/Login.jsx';
 import SheetEditor from './components/SheetEditor.jsx';
 import googleAuthService from './services/googleAuth.js';
+import { API_BASE_URL } from './config';
 
 // Key for storing auth state in localStorage
 const AUTH_STORAGE_KEY = 'dpr_auth_state';
 const LAST_ROUTE_KEY = 'dpr_last_route';
 const USER_INFO_KEY = 'dpr_user_info';
+const DPR_TEMPLATE_CHECKED_KEY = 'dpr_template_checked';
 
 // Route Guard component
 const RouteGuard = ({ isAuthenticated, isLoading }) => {
@@ -58,6 +60,7 @@ function AppContent() {
   });
   
   const [isLoading, setIsLoading] = useState(true);
+  const [uploadingTemplate, setUploadingTemplate] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -141,6 +144,32 @@ function AppContent() {
         localStorage.setItem(AUTH_STORAGE_KEY, 'true');
         localStorage.setItem(USER_INFO_KEY, JSON.stringify(userInfo));
         
+        // Check if this is first login (template not checked yet)
+        const templateChecked = localStorage.getItem(DPR_TEMPLATE_CHECKED_KEY);
+        
+        if (!templateChecked) {
+          console.log('First login detected, checking for DPR template...');
+          setUploadingTemplate(true);
+          
+          try {
+            const result = await googleAuthService.checkAndUploadDPRTemplate(API_BASE_URL);
+            
+            if (result.status === 'success') {
+              console.log('DPR template uploaded successfully:', result);
+            } else if (result.status === 'exists') {
+              console.log('DPR template already exists:', result);
+            }
+            
+            // Mark template as checked
+            localStorage.setItem(DPR_TEMPLATE_CHECKED_KEY, 'true');
+          } catch (uploadError) {
+            console.error('Error uploading DPR template:', uploadError);
+            // Don't block login on template upload failure
+          } finally {
+            setUploadingTemplate(false);
+          }
+        }
+        
         // Redirect to the last visited route or home
         const lastRoute = localStorage.getItem(LAST_ROUTE_KEY) || '/';
         navigate(lastRoute, { replace: true });
@@ -164,6 +193,7 @@ function AppContent() {
       localStorage.removeItem(AUTH_STORAGE_KEY);
       localStorage.removeItem(USER_INFO_KEY);
       localStorage.removeItem(LAST_ROUTE_KEY);
+      localStorage.removeItem(DPR_TEMPLATE_CHECKED_KEY);  // Clear template check flag
       // Redirect to login page
       navigate('/login', { replace: true });
     } catch (error) {
@@ -174,6 +204,7 @@ function AppContent() {
       localStorage.removeItem(AUTH_STORAGE_KEY);
       localStorage.removeItem(USER_INFO_KEY);
       localStorage.removeItem(LAST_ROUTE_KEY);
+      localStorage.removeItem(DPR_TEMPLATE_CHECKED_KEY);
       navigate('/login', { replace: true });
     }
   };
@@ -184,6 +215,19 @@ function AppContent() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
           <p className="mt-4 text-gray-600">Initializing SMART DPR...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show uploading template message
+  if (uploadingTemplate) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600 font-medium">DPR sheet is being uploaded...</p>
+          <p className="mt-2 text-sm text-gray-500">Please wait while we set up your workspace</p>
         </div>
       </div>
     );

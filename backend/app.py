@@ -1,13 +1,15 @@
 import os
 import string
 from datetime import datetime
-from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi import FastAPI, Request, Depends, HTTPException, File, UploadFile
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from typing import Optional, List
+from googleapiclient.http import MediaFileUpload
+import mimetypes
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 from google.oauth2.credentials import Credentials
@@ -28,6 +30,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
+        "http://localhost:3001",
         "http://localhost:5173",
         "http://localhost:8080",
         "http://localhost:8000",
@@ -100,6 +103,62 @@ def get_sheets_service(token: str = Depends(oauth2_scheme)):
             status_code=401,
             detail=f"Invalid authentication credentials: {str(e)}"
         )
+
+def column_letter_to_number(col_letter):
+    """Convert column letter(s) to 0-based column number.
+    
+    Examples:
+    A -> 0, B -> 1, Z -> 25, AA -> 26, AB -> 27, etc.
+    """
+    col_letter = col_letter.upper()
+    result = 0
+    for char in col_letter:
+        result = result * 26 + (ord(char) - ord('A') + 1)
+    return result - 1
+
+def get_sheet_range(sheet_name, cell_range=None):
+    """Get proper range specification for Google Sheets API.
+    
+    Args:
+        sheet_name: Name of the sheet
+        cell_range: Optional cell range (e.g., 'A1:D10', 'A1', etc.)
+    
+    Returns:
+        Properly formatted range string
+    """
+    # Check if sheet name needs escaping (has special characters)
+    needs_quotes = (any(char in sheet_name for char in [' ', '_', '-', '.', '+', '(', ')', '[', ']']) or
+                   (sheet_name and sheet_name[0].isdigit()))
+    
+    if needs_quotes:
+        # Escape any single quotes in the name by doubling them
+        escaped_name = sheet_name.replace("'", "''")
+        sheet_part = f"'{escaped_name}'"
+    else:
+        sheet_part = sheet_name
+    
+    # If no cell range specified, return just the (possibly quoted) sheet name
+    if not cell_range:
+        return sheet_part
+    
+    # For cell ranges, add the range after the sheet name
+    return f"{sheet_part}!{cell_range}"
+
+def escape_sheet_name_for_range(sheet_name):
+    """Escape sheet name for use in range specifications (A1 notation)."""
+    # For range specifications, we need to wrap in quotes if contains special chars
+    # but NOT URL encode - the API client will handle that
+    if (any(char in sheet_name for char in [' ', '_', '-', '.', '+', '(', ')', '[', ']']) or
+        (sheet_name and sheet_name[0].isdigit())):
+        # Escape any single quotes in the name by doubling them
+        escaped_name = sheet_name.replace("'", "''")
+        return f"'{escaped_name}'"
+    return sheet_name
+
+def escape_sheet_name(sheet_name):
+    """For API calls that use sheet name directly (not in ranges), return unescaped name."""
+    # For direct API calls, use the original name without quotes
+    return sheet_name
 
 def ensure_log_sheet_exists(service, spreadsheet_id):
     """Ensure LOG sheet exists and has the correct headers."""
@@ -221,7 +280,7 @@ async def print_hello_world(request: HelloWorldRequest, service=Depends(get_shee
     row_count = request.row_count
 
     values = [[f"Hello World {i+1}" for i in range(row_count)]]
-    range_name = f"{sheet_name}!A1:A{row_count}"
+    range_name = get_sheet_range(sheet_name, f"A1:A{row_count}")
     body = {'values': values, 'majorDimension': 'COLUMNS'}
 
     result = service.spreadsheets().values().update(
@@ -239,7 +298,7 @@ async def print_hello_world(request: HelloWorldRequest, service=Depends(get_shee
 async def get_sheet_info(request: SheetInfoRequest, service=Depends(get_sheets_service)):
     sheet = service.spreadsheets().values().get(
         spreadsheetId=request.spreadsheet_id,
-        range=request.sheet_name
+        range=get_sheet_range(request.sheet_name)
     ).execute()
 
     values = sheet.get("values", [])
@@ -308,10 +367,30 @@ async def get_sheet_info(request: SheetInfoRequest, service=Depends(get_sheets_s
 @app.post("/api/update-sheet")
 async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_service), token: str = Depends(oauth2_scheme)):
     try:
+        # First check if the sheet exists
+        try:
+            spreadsheet_info = service.spreadsheets().get(
+                spreadsheetId=request.spreadsheet_id
+            ).execute()
+            
+            available_sheets = [sheet['properties']['title'] for sheet in spreadsheet_info.get('sheets', [])]
+            print(f"DEBUG: Available sheets: {available_sheets}")
+            print(f"DEBUG: Requested sheet: '{request.sheet_name}'")
+            
+            if request.sheet_name not in available_sheets:
+                return {"status": "error", "message": f"Sheet '{request.sheet_name}' not found. Available sheets: {available_sheets}"}
+                
+        except Exception as e:
+            print(f"DEBUG: Error checking spreadsheet info: {str(e)}")
+            return {"status": "error", "message": f"Error accessing spreadsheet: {str(e)}"}
+        
         # First get the sheet data
+        range_to_use = get_sheet_range(request.sheet_name)
+        print(f"DEBUG: Using range: '{range_to_use}' for sheet: '{request.sheet_name}'")
+        
         sheet = service.spreadsheets().values().get(
             spreadsheetId=request.spreadsheet_id,
-            range=request.sheet_name
+            range=range_to_use
         ).execute()
 
         # Manually process sheet_info as it's done in get_sheet_info
@@ -506,7 +585,7 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
         
         for (row_idx, col_idx, update, qty) in zip(row_indices, columns_indices, updations, quantities):
             # Convert column letter to column number (0-based)
-            col_num = ord(col_idx.upper()) - ord('A')
+            col_num = column_letter_to_number(col_idx)
             row_num = int(row_idx)  # Convert to 0-based
             
             # 1. Update main sheet with date and formatting
@@ -547,7 +626,7 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
                 cell_range = f"{col_idx}{row_num + 1}"  # +1 because row_num is 0-based
                 result = service.spreadsheets().values().get(
                     spreadsheetId=request.spreadsheet_id,
-                    range=f"'QNT'!{cell_range}",
+                    range=get_sheet_range("QNT", cell_range),
                     valueRenderOption='UNFORMATTED_VALUE'
                 ).execute()
                 
@@ -612,7 +691,7 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
                 try:
                     # Get the row data (A,B,C,D columns)
                     row_num = int(row_idx)
-                    range_notation = f"{request.sheet_name}!A{row_num}:D{row_num}"
+                    range_notation = get_sheet_range(request.sheet_name, f"A{row_num}:D{row_num}")
                     result = service.spreadsheets().values().get(
                         spreadsheetId=request.spreadsheet_id,
                         range=range_notation,
@@ -620,7 +699,7 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
                     ).execute()
                     
                     # Get the column header (row 2 of the updated column)
-                    header_range = f"{request.sheet_name}!{col_idx}2"
+                    header_range = get_sheet_range(request.sheet_name, f"{col_idx}2")
                     header_result = service.spreadsheets().values().get(
                         spreadsheetId=request.spreadsheet_id,
                         range=header_range,
@@ -634,7 +713,7 @@ async def update_sheet(request: UpdateSheetRequest, service=Depends(get_sheets_s
                     row_values = result.get('values', [['', '', '', '']])[0]
                     
                     # Get the updated quantity from the QNT sheet (add 1 to row_num for 1-based indexing)
-                    qnt_range = f"'QNT'!{col_idx.upper()}{row_num + 1}"
+                    qnt_range = get_sheet_range("QNT", f"{col_idx.upper()}{row_num + 1}")
                     qnt_result = service.spreadsheets().values().get(
                         spreadsheetId=request.spreadsheet_id,
                         range=qnt_range,
@@ -790,6 +869,105 @@ async def query_logs(request: LogsQueryRequest, service=Depends(get_sheets_servi
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
+
+# -----------------------------
+# Upload DPR Template Sheet endpoint
+# -----------------------------
+@app.post("/api/upload-template-sheet")
+async def upload_template_sheet(token: str = Depends(oauth2_scheme)):
+    """
+    Upload the DPR.xlsx template to user's Google Drive and convert to Google Sheets.
+    Only uploads if user doesn't already have a sheet named "DPR".
+    """
+    try:
+        # Create credentials from token
+        creds = Credentials(
+            token=token,
+            token_uri=os.getenv("GOOGLE_TOKEN_URI"),
+            client_id=os.getenv("GOOGLE_CLIENT_ID"),
+            client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+            scopes=[
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive.file"
+            ]
+        )
+        
+        # Check if credentials are valid
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
+                creds.refresh(GoogleRequest())
+            else:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Token expired. Please re-authenticate."
+                )
+        
+        # Build Drive service
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        # Check if user already has a sheet named "DPR"
+        query = "mimeType='application/vnd.google-apps.spreadsheet' and name='DPR' and trashed=false"
+        results = drive_service.files().list(
+            q=query,
+            fields='files(id, name)',
+            pageSize=10
+        ).execute()
+        
+        existing_files = results.get('files', [])
+        
+        if existing_files:
+            # User already has a DPR sheet
+            return {
+                "status": "exists",
+                "message": "DPR sheet already exists",
+                "spreadsheet_id": existing_files[0]['id'],
+                "spreadsheet_name": existing_files[0]['name']
+            }
+        
+        # Path to the template file
+        template_path = os.path.join(os.path.dirname(__file__), 'sheet', 'DPR.xlsx')
+        
+        if not os.path.exists(template_path):
+            raise HTTPException(
+                status_code=500,
+                detail="Template file not found on server"
+            )
+        
+        # Upload the file to Google Drive and convert to Google Sheets
+        file_metadata = {
+            'name': 'DPR',
+            'mimeType': 'application/vnd.google-apps.spreadsheet'  # Convert to Google Sheets
+        }
+        
+        media = MediaFileUpload(
+            template_path,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            resumable=True
+        )
+        
+        file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, name, webViewLink'
+        ).execute()
+        
+        return {
+            "status": "success",
+            "message": "DPR template sheet uploaded successfully",
+            "spreadsheet_id": file.get('id'),
+            "spreadsheet_name": file.get('name'),
+            "web_view_link": file.get('webViewLink')
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload template sheet: {str(e)}"
+        )
 
 # -----------------------------
 # Main entry

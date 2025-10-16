@@ -652,6 +652,38 @@ class GoogleAuthService {
       throw error;
     }
   }
+
+  // Check if user has a DPR template sheet and upload if not
+  async checkAndUploadDPRTemplate(apiBaseUrl) {
+    try {
+      console.log('Checking for DPR template sheet...');
+      
+      // Get access token
+      const accessToken = this.getAccessToken();
+      
+      // Call backend to check and upload if needed
+      const response = await fetch(`${apiBaseUrl}/api/upload-template-sheet`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log('DPR template check result:', result);
+      
+      return result;
+    } catch (error) {
+      console.error('Error checking/uploading DPR template:', error);
+      throw error;
+    }
+  }
 }
 
 export default new GoogleAuthService();
